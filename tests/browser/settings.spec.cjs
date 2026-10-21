@@ -11,9 +11,12 @@ async function login(page) {
     await expect(page.getByRole('heading', { name: 'Storewide Sale', exact: true })).toBeVisible({ timeout: 15000 });
 }
 async function select(page, kind, query, result) {
-    const input = page.locator(`#sws-${kind} + .select2 .select2-search__field`);
-    await input.fill(query);
-    await page.getByRole('option', { name: result }).click();
+    const container = page.locator(`#sws-${kind} + .select2`);
+    await container.locator('.select2-selection').click();
+    const input = container.locator('.select2-search__field');
+    await input.fill('');
+    await input.pressSequentially(query);
+    await page.locator('.select2-results__option').filter({ hasText: result }).click({ timeout: 15000 });
     await input.press('Escape');
 }
 
