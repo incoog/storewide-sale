@@ -1,0 +1,128 @@
+name: Tests and installable package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    name: PHP ${{ matrix.php }} syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.3', '8.5']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: Lint plugin and test PHP files
+        run: find storewide-sale.php includes tests -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  integration:
+    name: WordPress ${{ matrix.wp }}, WooCommerce ${{ matrix.wc }}, PHP ${{ matrix.php }}, MySQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '7.4'
+            wp: '6.5'
+            wc: '8.0.0'
+          - php: '8.3'
+            wp: 'latest'
+            wc: 'latest'
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: wordpress
+          MYSQL_ROOT_PASSWORD: wordpress
+          MYSQL_ROOT_HOST: '%'
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pwordpress"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check out the independent SOFT79 fork for integration tests
+        uses: actions/checkout@v6
+        with:
+          repository: incoog/soft79-wc-pricing-rules
+          ref: 7923cba7f27c44e081c442e1e7b09d246da01b92
+          path: .test-deps/soft79
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mysqli, mbstring, zip
+          tools: wp-cli
+          coverage: none
+      - name: Run price, restoration, conflict and SOFT79 tests
+        env:
+          WP_ROOT: ${{ runner.temp }}/sws-wordpress
+          WP_VERSION: ${{ matrix.wp }}
+          WC_VERSION: ${{ matrix.wc }}
+          SWS_SOFT79_FILE: ${{ github.workspace }}/.test-deps/soft79/soft79-wc-pricing-rules.php
+        run: bash scripts/ci-integration.sh
+
+  frontend:
+    name: Admin polling and package tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: node --test tests/admin.test.cjs
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+  package:
+    name: Build installable ZIP
+    needs: [syntax, integration, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build ZIP and validate version tags
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: python3 scripts/build_release.py --expected-tag "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.zip
+          archive: false
+          if-no-files-found: error
+      - name: Prepare a draft release for a version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if release_is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$release_is_draft" = 'true' ]; then
+              gh release upload "$RELEASE_TAG" dist/*.zip --clobber
+            else
+              echo 'This release is already published; its assets are unchanged.'
+            fi
+          else
+            gh release create "$RELEASE_TAG" dist/*.zip --draft --verify-tag --title "Storewide Sale ${RELEASE_TAG#v}" --generate-notes
+          fi

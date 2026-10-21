@@ -4,6 +4,8 @@ Apply one percentage discount to many products, exclude recent products or categ
 
 ## Installation
 
+[Download the installable ZIP from Releases](https://github.com/incoog/storewide-sale/releases). The repository source archive also contains development tools; use the release asset for WordPress installation.
+
 Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.1.0.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
 
 There is no build step or runtime dependency on another discount plugin. The ZIP contains the plugin, this README and its licence. Test tooling is not included.
@@ -67,7 +69,24 @@ The initial implementation passed 71 integration assertions in WordPress 7.1.3, 
 
 Test representative products, tax/currency rounding, existing scheduled sales, category exclusions, variation prices, other price-changing extensions and your actual cart/checkout on staging before live use. This plugin sets ordinary product sale prices; ordinary coupon rules still apply. It does not claim tested compatibility with every product type, cache, currency extension or checkout implementation.
 
+## Development and automated checks
+
+GitHub Actions runs on pushes to `main`, pull requests and version tags. It checks PHP syntax on 7.4, 8.3 and 8.5; tests the admin polling script with Node's built-in test runner; verifies the ZIP builder; and runs the full product-price/restoration fixtures against a real WordPress/WooCommerce installation with MySQL 8. Two integration combinations are exercised: WordPress 6.5 / WooCommerce 8.0.0 / PHP 7.4, and current WordPress / WooCommerce / PHP 8.3. The SOFT79 fixture is a separate checkout pinned to commit `7923cba7f27c44e081c442e1e7b09d246da01b92`; SOFT79 code is not bundled in this plugin.
+
+Fast development commands are `node --test tests/admin.test.cjs`, `python3 -m unittest discover -s tests -p 'test_*.py' -v` and `python3 scripts/build_release.py`. No npm dependencies are needed. The package builder includes only the main PHP file, `includes`, `assets`, README and LICENSE. Its ZIP has one `storewide-sale` root directory. Every successful workflow uploads this installable ZIP as an Actions artifact. A version-tag workflow validates the tag against the PHP header and prepares a draft release with the ZIP; publishing remains an explicit step.
+
+The integration script creates product fixtures and changes prices. Run it only on a disposable, empty test site. It requires CLI, `SWS_TEST_RUN=1`, a site option `sws_test_environment=disposable`, no existing product posts/campaign and `SWS_SOFT79_FILE` pointing to the separately checked-out fork entry point. Use `SWS_TEST_RUN=1 SWS_SOFT79_FILE=/absolute/path/to/soft79-wc-pricing-rules.php wp eval-file /absolute/path/to/storewide-sale/tests/integration.php --path=/absolute/path/to/disposable-wordpress` after installing WooCommerce and activating this plugin. `scripts/ci-integration.sh` provisions that environment in Actions using its dedicated MySQL service.
+
 ## Changelog
+
+### Unreleased
+
+| Type | Change |
+| --- | --- |
+| Added | Repeatable WordPress/WooCommerce integration tests against MySQL, covering price restoration, conflicts, manual overrides, recovery, deletion, access guards and SOFT79 detection |
+| Added | PHP compatibility checks, admin polling tests and package tests in GitHub Actions |
+| Added | Reproducible installation ZIP builder, workflow artifacts and draft release preparation for version tags |
+| Changed | Keep development/test files in the repository and exclude them from the installable release ZIP |
 
 ### 0.1.0
 
