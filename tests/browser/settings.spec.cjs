@@ -49,6 +49,7 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await expect(page.locator('.sws-status-active')).toBeVisible({ timeout: 45000 });
     await page.waitForLoadState('load', { timeout: 30000 });
     await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
+    console.log('Active page animation frame:', await page.evaluate(() => Promise.race([new Promise(resolve => requestAnimationFrame(() => resolve({ frame: true }))), new Promise(resolve => setTimeout(() => resolve({ frame: false, visibility: document.visibilityState, ready: document.readyState, raf: String(requestAnimationFrame), animations: document.getAnimations().length }), 1500))])));
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
