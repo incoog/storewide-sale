@@ -51,7 +51,6 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await page.waitForLoadState('load', { timeout: 30000 });
     await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
     await page.bringToFront();
-    console.log('Active page:', await page.evaluate(() => ({ visibility: document.visibilityState, ready: document.readyState, button: document.querySelector('.sws-switch').getBoundingClientRect().toJSON() })));
     await page.screenshot({ path: 'test-results/screenshots/settings-active.png', fullPage: true, timeout: 15000 });
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });
