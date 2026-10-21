@@ -40,7 +40,6 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     const right = await page.locator('.sws-sidebar').boundingBox();
     expect(right.x).toBeGreaterThanOrEqual(left.x + left.width);
     fs.mkdirSync('test-results/screenshots', { recursive: true });
-    await page.screenshot({ path: path.join('test-results/screenshots', 'settings-desktop.png'), fullPage: true });
     // Removing a chip updates both the submitted value and summary.
     await page.locator('#sws-products + .select2 .select2-selection__choice__remove').click();
     await expect(page.locator('#sws-summary-products')).toHaveText('0');
@@ -50,11 +49,10 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await expect(page.locator('.sws-status-active')).toBeVisible({ timeout: 45000 });
     await page.waitForLoadState('load', { timeout: 30000 });
     await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
-    await page.bringToFront();
-    await page.screenshot({ path: 'test-results/screenshots/settings-active.png', fullPage: true, timeout: 15000 });
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
+    await page.screenshot({ path: path.join('test-results/screenshots', 'settings-desktop.png'), fullPage: true, timeout: 15000 });
 });
 
 test('narrow screens stack the overview without horizontal overflow', async ({ page }) => {
