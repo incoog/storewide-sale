@@ -7,7 +7,8 @@ async function login(page) {
     await page.locator('#user_login').fill('admin');
     await page.locator('#user_pass').fill('disposable-test-password');
     await page.locator('#wp-submit').click();
-    await expect(page.getByRole('heading', { name: 'Storewide Sale', exact: true })).toBeVisible();
+    await page.waitForURL('**/wp-admin/admin.php?page=storewide-sale', { timeout: 30000 });
+    await expect(page.getByRole('heading', { name: 'Storewide Sale', exact: true })).toBeVisible({ timeout: 15000 });
 }
 async function select(page, kind, query, result) {
     const input = page.locator(`#sws-${kind} + .select2 .select2-search__field`);
