@@ -8,6 +8,7 @@ final class SWS_Admin {
         add_action( 'admin_menu', array( $this, 'menu' ) );
         add_action( 'admin_post_sws_action', array( $this, 'action' ) );
         add_action( 'wp_ajax_sws_process', array( $this, 'ajax' ) );
+        add_action( 'wp_ajax_sws_search', array( $this, 'search' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'assets' ) );
         add_action( 'woocommerce_product_options_pricing', array( $this, 'product_notice' ) );
         add_action( 'woocommerce_variation_options_pricing', array( $this, 'variation_notice' ), 20, 3 );
@@ -22,7 +23,10 @@ final class SWS_Admin {
     }
     public function assets( $hook ) {
         if ( 'woocommerce_page_storewide-sale' !== $hook ) { return; }
-        wp_enqueue_style( 'sws-admin', plugins_url( 'assets/admin.css', SWS_FILE ), array(), SWS_VERSION );
+        wp_enqueue_style( 'select2', WC()->plugin_url() . '/assets/css/select2.css', array(), WC_VERSION );
+        wp_enqueue_style( 'sws-admin', plugins_url( 'assets/admin.css', SWS_FILE ), array( 'select2' ), SWS_VERSION );
+        wp_enqueue_script( 'sws-selectors', plugins_url( 'assets/selectors.js', SWS_FILE ), array( 'jquery', 'wc-enhanced-select' ), SWS_VERSION, true );
+        wp_localize_script( 'sws-selectors', 'swsSelectors', array( 'url' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'sws_search' ) ) );
         wp_enqueue_script( 'sws-admin', plugins_url( 'assets/admin.js', SWS_FILE ), array(), SWS_VERSION, true );
         wp_localize_script( 'sws-admin', 'swsAdmin', array( 'url' => admin_url( 'admin-ajax.php' ), 'nonce' => wp_create_nonce( 'sws_process' ) ) );
     }
@@ -63,6 +67,60 @@ final class SWS_Admin {
             wp_send_json_success( array( 'phase' => isset( $state['phase'] ) ? $state['phase'] : 'stopped', 'counts' => SWS_Store::counts( $state ), 'error' => isset( $state['error'] ) ? $state['error'] : '' ) );
         } catch ( Throwable $error ) { wp_send_json_error( array( 'message' => $error->getMessage() ), 409 ); }
     }
+    public function search() {
+        $this->access();
+        check_ajax_referer( 'sws_search', 'nonce' );
+        $kind = isset( $_GET['kind'] ) && is_string( $_GET['kind'] ) ? sanitize_key( $_GET['kind'] ) : '';
+        $term = isset( $_GET['term'] ) && is_string( $_GET['term'] ) ? sanitize_text_field( wp_unslash( $_GET['term'] ) ) : '';
+        wp_send_json( array( 'results' => $this->search_results( $kind, $term ) ) );
+    }
+    public static function category_label( $term ) {
+        $names = array();
+        foreach ( array_reverse( get_ancestors( $term->term_id, 'product_cat', 'taxonomy' ) ) as $id ) {
+            $ancestor = get_term( $id, 'product_cat' );
+            if ( $ancestor && ! is_wp_error( $ancestor ) ) { $names[] = $ancestor->name; }
+        }
+        $names[] = $term->name;
+        return html_entity_decode( implode( ' / ', $names ), ENT_QUOTES, 'UTF-8' );
+    }
+    public function search_results( $kind, $term ) {
+        if ( ! current_user_can( 'manage_woocommerce' ) || strlen( $term ) < 1 || strlen( $term ) > 200 ) { return array(); }
+        $results = array();
+        if ( 'categories' === $kind ) {
+            $terms = get_terms( array( 'taxonomy' => 'product_cat', 'hide_empty' => false, 'search' => $term, 'number' => 30, 'orderby' => 'name' ) );
+            if ( is_wp_error( $terms ) ) { return array(); }
+            foreach ( $terms as $term ) { $results[] = array( 'id' => (int) $term->term_id, 'text' => self::category_label( $term ) ); }
+        } elseif ( 'products' === $kind && strlen( $term ) >= 2 ) {
+            $published = function () { return array( 'publish' ); };
+            add_filter( 'woocommerce_search_products_post_statuses', $published );
+            try { $ids = WC_Data_Store::load( 'product' )->search_products( $term, '', true, false, 50 ); }
+            finally { remove_filter( 'woocommerce_search_products_post_statuses', $published ); }
+            foreach ( $ids as $id ) {
+                $product = wc_get_product( $id );
+                if ( ! SWS_Engine::supported_product( $product, true ) ) { continue; }
+                $edit_id = $product->get_parent_id() ? $product->get_parent_id() : $product->get_id();
+                if ( ! current_user_can( 'edit_post', $edit_id ) ) { continue; }
+                $results[] = array( 'id' => (int) $id, 'text' => wp_strip_all_tags( $product->get_formatted_name() ) );
+            }
+        }
+        return $results;
+    }
+    private function selector( $kind, $state ) {
+        $label = 'categories' === $kind ? 'Sök kategorier att undanta…' : 'Sök produktnamn, artikelnummer eller ID…';
+        echo '<select id="sws-' . esc_attr( $kind ) . '" name="' . esc_attr( $kind ) . '[]" class="sws-search" multiple data-kind="' . esc_attr( $kind ) . '" data-placeholder="' . esc_attr( $label ) . '" aria-describedby="sws-' . esc_attr( $kind ) . '-help" style="width:100%">';
+        foreach ( isset( $state[ $kind ] ) ? $state[ $kind ] : array() as $id ) {
+            $name = '#' . $id . ' (inte längre tillgänglig)';
+            if ( 'categories' === $kind ) {
+                $term = get_term( $id, 'product_cat' );
+                if ( $term && ! is_wp_error( $term ) ) { $name = self::category_label( $term ); }
+            } else {
+                $product = wc_get_product( $id );
+                if ( $product ) { $name = wp_strip_all_tags( $product->get_formatted_name() ); }
+            }
+            echo '<option value="' . esc_attr( $id ) . '" selected>' . esc_html( $name ) . '</option>';
+        }
+        echo '</select>';
+    }
     private function form( $command, $state ) {
         echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="sws-form">';
         wp_nonce_field( 'sws_action' );
@@ -71,16 +129,39 @@ final class SWS_Admin {
     private function money( $price ) { return '' === $price ? 'Inget reapris' : wc_price( $price ); }
     private function soft79( $state, $running ) {
         $status = SWS_Engine::soft79_status();
+        if ( 'absent' === $status ) { return; }
+        echo '<section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-admin-plugins" aria-hidden="true"></span><h2>SOFT79</h2></div>';
         if ( 'fork' === $status ) {
             if ( $running ) { $this->form( 'integration', $state ); }
-            echo '<p><label><input type="checkbox" name="soft79" value="1" ' . checked( ! empty( $state['soft79'] ), true, false ) . '> Inaktivera SOFT79 för produkter som hanteras av kampanjen</label></p>';
+            echo '<label class="sws-checkbox"><input type="checkbox" name="soft79" value="1" ' . checked( ! empty( $state['soft79'] ), true, false ) . '><span><strong>Undanta kampanjprodukter från SOFT79</strong><small>Förhindra ytterligare SOFT79-rabatt på produkter som hanteras av kampanjen.</small></span></label>';
             echo '<p class="description">Gäller även manuellt ändrade kampanjprodukter fram till kampanjens slut. Övriga produkter följer SOFT79 som vanligt.</p>';
-            if ( $running ) { submit_button( 'Spara SOFT79-inställning', 'secondary', 'submit', false ); echo '</form>'; }
+            if ( $running ) { submit_button( 'Spara integration', 'secondary', 'submit', false ); echo '</form>'; }
         } elseif ( 'original' === $status ) {
-            echo '<div class="notice notice-info inline"><p>SOFT79 finns installerat. Det finns en fristående fork med en hook som gör att SOFT79 kan undantas för kampanjprodukter: <a href="https://github.com/incoog/soft79-wc-pricing-rules" target="_blank" rel="noopener noreferrer">Hämta forken på GitHub</a>.</p><p>Den installerade originalversionen stängs inte av av Storewide Sale.</p></div>';
-        } elseif ( 'inactive_fork' === $status ) {
-            echo '<div class="notice notice-info inline"><p>SOFT79-forken finns installerad men körs inte. Aktivera forken för att kunna använda integrationen.</p></div>';
+            echo '<p>Du har originalversionen av SOFT79. Vill du automatiskt undanta kampanjprodukter från dess rabatter finns en fristående fork med stöd för detta.</p><a class="sws-text-link" href="https://github.com/incoog/soft79-wc-pricing-rules" target="_blank" rel="noopener noreferrer">Visa SOFT79-forken <span aria-hidden="true">↗</span></a><p class="description">Originalversionen stängs inte av av Storewide Sale.</p>';
+        } else {
+            echo '<p>SOFT79-forken finns installerad men körs inte. Aktivera forken för att kunna använda integrationen.</p>';
         }
+        echo '</section>';
+    }
+    private function scope_summary( $state ) {
+        $category_count = isset( $state['categories'] ) ? count( $state['categories'] ) : 0;
+        $product_count = isset( $state['products'] ) ? count( $state['products'] ) : 0;
+        echo '<dl class="sws-summary"><div><dt>Rabatt</dt><dd><span id="sws-summary-percent">' . esc_html( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '</span> %</dd></div><div><dt>Datumgräns</dt><dd id="sws-summary-date">' . esc_html( ! empty( $state['cutoff'] ) ? $state['cutoff'] : 'Ingen gräns' ) . '</dd></div><div><dt>Undantagna kategorier</dt><dd id="sws-summary-categories">' . esc_html( $category_count ) . '</dd></div><div><dt>Undantagna produkter</dt><dd id="sws-summary-products">' . esc_html( $product_count ) . '</dd></div></dl>';
+    }
+    private function locked_rules( $state ) {
+        echo '<section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-filter" aria-hidden="true"></span><h2>Kampanjens urval</h2></div><p>Rabatt och undantag är låsta tills kampanjen har avslutats.</p>';
+        foreach ( array( 'categories' => 'Undantagna kategorier', 'products' => 'Undantagna produkter' ) as $kind => $label ) {
+            echo '<h3 class="sws-field-label">' . esc_html( $label ) . '</h3><div class="sws-chips">';
+            if ( empty( $state[ $kind ] ) ) { echo '<span class="sws-muted">Inga undantag</span>'; }
+            foreach ( isset( $state[ $kind ] ) ? $state[ $kind ] : array() as $id ) {
+                $name = '#' . $id;
+                if ( 'categories' === $kind ) { $term = get_term( $id, 'product_cat' ); if ( $term && ! is_wp_error( $term ) ) { $name = self::category_label( $term ); } }
+                else { $product = wc_get_product( $id ); if ( $product ) { $name = $product->get_name(); } }
+                echo '<span class="sws-chip">' . esc_html( $name ) . '</span>';
+            }
+            echo '</div>';
+        }
+        echo '</section>';
     }
     public function render() {
         $this->access();
@@ -89,47 +170,44 @@ final class SWS_Admin {
         $counts = SWS_Store::counts( $state );
         $phase = isset( $state['phase'] ) ? $state['phase'] : 'stopped';
         $labels = array( 'starting' => 'Aktiveras', 'active' => 'Aktiv', 'stopping' => 'Återställs', 'stopped' => 'Avstängd' );
-        echo '<div class="wrap sws"><h1>Storewide Sale</h1>';
+        echo '<div class="wrap sws"><header class="sws-header"><div><p class="sws-eyebrow">WOOCOMMERCE</p><h1>Storewide Sale</h1><p>En gemensam rabatt. Full kontroll när kampanjen är över.</p></div><span class="sws-status sws-status-' . esc_attr( $phase ) . '"><span aria-hidden="true"></span>' . esc_html( $labels[ $phase ] ) . '</span></header>';
         $notice = get_transient( 'sws_notice_' . get_current_user_id() );
         if ( $notice ) { delete_transient( 'sws_notice_' . get_current_user_id() ); echo '<div class="notice notice-error"><p>' . esc_html( $notice ) . '</p></div>'; }
-        echo '<div class="sws-card"><h2>Kampanj <span class="sws-status">' . esc_html( isset( $labels[ $phase ] ) ? $labels[ $phase ] : $phase ) . '</span></h2>';
-        echo '<p>Sätt en gemensam procentrabatt på sortimentet och återställ tidigare reapriser när kampanjen avslutas.</p>';
         if ( ! $running ) {
             $this->form( 'start', $state );
-            echo '<p><label for="sws-percent"><strong>Procentrabatt</strong></label><br><input id="sws-percent" name="percent" type="number" min="0.01" max="100" step="0.01" value="' . esc_attr( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '" required> % av ordinarie pris</p>';
-            echo '<p><label for="sws-cutoff"><strong>Undanta produkter skapade efter</strong></label><br><input id="sws-cutoff" name="cutoff" type="date" value="' . esc_attr( isset( $state['cutoff'] ) ? $state['cutoff'] : '' ) . '"></p><p class="description">Valt datum ingår. Lämna tomt för att inte begränsa efter datum. Variationer följer huvudproduktens datum.</p>';
-            echo '<p><label for="sws-categories"><strong>Undanta kategorier</strong></label><br><select id="sws-categories" name="categories[]" multiple size="8">';
-            $terms = get_terms( array( 'taxonomy' => 'product_cat', 'hide_empty' => false, 'orderby' => 'name' ) );
-            if ( ! is_wp_error( $terms ) ) {
-                foreach ( $terms as $term ) {
-                    $selected = isset( $state['categories'] ) && in_array( (int) $term->term_id, $state['categories'], true );
-                    echo '<option value="' . esc_attr( $term->term_id ) . '" ' . selected( $selected, true, false ) . '>' . esc_html( $term->name ) . '</option>';
-                }
-            }
-            echo '</select></p><p class="description">Underkategorier ingår. Håll Ctrl eller Cmd för att välja flera. Variationer följer huvudproduktens kategorier.</p>';
+            echo '<div class="sws-layout"><div class="sws-main"><section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-tag" aria-hidden="true"></span><h2>Kampanjrabatt</h2></div><p>Rabatten beräknas från produktens ordinarie pris.</p><label for="sws-percent" class="sws-field-label">Procentrabatt</label><div class="sws-percent-input"><input id="sws-percent" name="percent" type="number" min="0.01" max="100" step="0.01" value="' . esc_attr( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '" required aria-describedby="sws-percent-help"><span aria-hidden="true">%</span></div><p id="sws-percent-help" class="description">Tidigare reapriser sparas och kan återställas när kampanjen avslutas.</p></section>';
+            echo '<section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-filter" aria-hidden="true"></span><h2>Undantag</h2><span class="sws-optional">Valfritt</span></div><p>Välj vilka delar av sortimentet som ska lämnas utanför kampanjen.</p><div class="sws-field"><label for="sws-cutoff" class="sws-field-label">Produkter skapade efter</label><input id="sws-cutoff" name="cutoff" type="date" value="' . esc_attr( isset( $state['cutoff'] ) ? $state['cutoff'] : '' ) . '" aria-describedby="sws-cutoff-help"><p id="sws-cutoff-help" class="description">Det valda datumet ingår. Lämna tomt för ingen datumgräns.</p></div>';
+            echo '<div class="sws-field"><label for="sws-categories" class="sws-field-label">Undanta kategorier</label>';
+            $this->selector( 'categories', $state );
+            echo '<p id="sws-categories-help" class="description">Sök och välj en eller flera kategorier. Underkategorier ingår.</p></div><div class="sws-field"><label for="sws-products" class="sws-field-label">Undanta produkter</label>';
+            $this->selector( 'products', $state );
+            echo '<p id="sws-products-help" class="description">Välj enskilda produkter eller variationer. En huvudprodukt undantar alla sina variationer.</p></div></section>';
             $this->soft79( $state, false );
-            echo '<p class="description">En befintlig aktiv rea med samma eller lägre pris lämnas orörd. Kampanjen omfattar publicerade och privata enkla produkter, externa produkter och variationer som finns när den startas.</p>';
-            echo '<p><button class="sws-switch" type="submit" role="switch" aria-checked="false"><span aria-hidden="true"></span> Aktivera kampanj</button></p></form>';
+            echo '</div><aside class="sws-sidebar"><section class="sws-card sws-overview"><h2>Kampanjöversikt</h2>';
+            $this->scope_summary( $state );
+            echo '<div class="sws-action-area"><button class="sws-switch" type="submit" role="switch" aria-checked="false"><span aria-hidden="true"></span> Aktivera kampanj</button><p>Du avslutar och återställer kampanjen från den här sidan.</p></div><div class="sws-scope-note"><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><p>Omfattar publicerade enkla produkter och publicerade variationer med en publicerad huvudprodukt.</p></div><p class="sws-fine-print">En befintlig aktiv rea med samma eller lägre pris lämnas orörd.</p></section></aside></div></form>';
         } else {
-            echo '<p><strong>' . esc_html( $state['percent'] ) . ' % rabatt</strong>. Inställningarna för urval och rabatt är låsta under kampanjen.</p>';
-            echo '<p>' . esc_html( isset( $counts['managed'] ) ? $counts['managed'] : 0 ) . ' automatiskt hanterade · ' . esc_html( isset( $counts['manual'] ) ? $counts['manual'] : 0 ) . ' manuellt ändrade · ' . esc_html( isset( $counts['done'] ) ? $counts['done'] : 0 ) . ' återställda/klara.</p>';
-            echo '<p>' . esc_html( $state['checked'] ) . ' katalogposter genomgångna, ' . esc_html( $state['skipped'] ) . ' överhoppade (till exempel undantagna, huvudprodukter eller redan lägre reapris).</p>';
+            echo '<div class="sws-layout"><div class="sws-main"><section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-chart-bar" aria-hidden="true"></span><h2>Kampanjen just nu</h2></div><div class="sws-metrics">';
+            foreach ( array( 'managed' => 'Automatiskt hanterade', 'manual' => 'Manuellt ändrade', 'done' => 'Återställda / klara' ) as $key => $label ) {
+                echo '<div><strong>' . esc_html( isset( $counts[ $key ] ) ? $counts[ $key ] : 0 ) . '</strong><span>' . esc_html( $label ) . '</span></div>';
+            }
+            echo '</div><p class="description">' . esc_html( $state['checked'] ) . ' katalogposter genomgångna · ' . esc_html( $state['skipped'] ) . ' överhoppade.</p>';
             if ( ! empty( $state['error'] ) ) { echo '<div class="notice notice-error inline"><p>' . esc_html( $state['error'] ) . '</p></div>'; }
-            if ( ! empty( $counts['conflicts'] ) ) { echo '<div class="notice notice-warning inline"><p>Det finns prisval som måste göras. Kampanjen kan inte avslutas färdigt förrän samtliga konflikter är lösta.</p></div>'; }
-            if ( 'stopping' !== $phase ) {
-                $this->form( 'stop', $state );
-                echo '<p><button class="sws-switch is-on" type="submit" role="switch" aria-checked="true" ' . disabled( ! empty( $counts['conflicts'] ) || ! empty( $counts['pending'] ), true, false ) . '><span aria-hidden="true"></span> Avsluta kampanj och återställ</button></p></form>';
-            }
-            if ( 'active' !== $phase || ! empty( $state['error'] ) || ! empty( $counts['pending'] ) ) {
-                $this->form( 'retry', $state ); submit_button( 'Fortsätt körningen', 'secondary', 'submit', false ); echo '</form>';
-            }
-            echo '<p class="description">Låt pluginet vara aktivt tills återställningen är klar. Avaktivering i WordPress återställer inte priserna.</p>';
-            $this->soft79( $state, true );
+            if ( ! empty( $counts['conflicts'] ) ) { echo '<div class="notice notice-warning inline"><p>Gör klart alla prisval nedan innan kampanjen avslutas. Återställningen väntar tills konflikterna är lösta.</p></div>'; }
             $work = empty( $state['error'] ) && ( 'starting' === $phase || ( 'stopping' === $phase && empty( $counts['conflicts'] ) ) || ! empty( $counts['pending'] ) );
             echo '<div id="sws-progress" role="status" aria-live="polite" data-work="' . ( $work ? '1' : '0' ) . '" data-phase="' . esc_attr( $phase ) . '"></div>';
-        }
-        echo '</div>';
-        if ( $running ) {
+            if ( 'active' !== $phase || ! empty( $state['error'] ) || ! empty( $counts['pending'] ) ) { $this->form( 'retry', $state ); submit_button( 'Fortsätt körningen', 'secondary', 'submit', false ); echo '</form>'; }
+            echo '</section>';
+            $this->locked_rules( $state );
+            $this->soft79( $state, true );
+            echo '</div><aside class="sws-sidebar"><section class="sws-card sws-overview"><h2>Kampanjöversikt</h2>';
+            $this->scope_summary( $state );
+            echo '<div class="sws-action-area">';
+            if ( 'stopping' !== $phase ) {
+                $this->form( 'stop', $state );
+                echo '<button class="sws-switch is-on" type="submit" role="switch" aria-checked="true" ' . disabled( ! empty( $counts['conflicts'] ) || ! empty( $counts['pending'] ), true, false ) . '><span aria-hidden="true"></span> Avsluta kampanj</button></form>';
+            } else { echo '<p><strong>Priserna återställs</strong></p>'; }
+            echo '<p>Låt pluginet vara aktivt tills återställningen är helt klar.</p></div></section></aside></div>';
             $this->list_products( $state, 'review', 'Prisändringar som kräver ett val', 'conflict_page' );
             $this->list_products( $state, 'manual', 'Manuellt ändrade reapriser', 'manual_page' );
         }

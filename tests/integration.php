@@ -50,6 +50,18 @@ $cat=wp_insert_term('Excluded','product_cat'); $child=wp_insert_term('Child','pr
 $excluded=product('Excluded category',1000); wp_set_object_terms($excluded,array($child['term_id']),'product_cat');
 $variable=new WC_Product_Variable(); $variable->set_name('Variable'); $variable->set_status('publish'); $variable->set_date_created('2020-01-01'); $variable->save();
 $v=new WC_Product_Variation(); $v->set_parent_id($variable->get_id()); $v->set_status('publish'); $v->set_regular_price(2000); $v->set_date_created('2025-01-01'); $v->save(); $variation=$v->get_id();
+$private=product('Private product',1000);$p=wc_get_product($private);$p->set_status('private');$p->save();
+$draft=product('Draft product',1000);$p=wc_get_product($draft);$p->set_status('draft');$p->save();
+$external=new WC_Product_External();$external->set_name('External product');$external->set_status('publish');$external->set_regular_price(1000);$external->save();$external_id=$external->get_id();
+$single=product('Excluded single',1000);$p=wc_get_product($single);$p->set_sku('EXCLUDE-SINGLE');$p->save();
+$parent2=new WC_Product_Variable();$parent2->set_name('Excluded variable parent');$parent2->set_status('publish');$parent2->set_date_created('2020-01-01');$parent2->save();
+$v2=new WC_Product_Variation();$v2->set_parent_id($parent2->get_id());$v2->set_status('publish');$v2->set_regular_price(800);$v2->save();$family_variation=$v2->get_id();
+$v3=new WC_Product_Variation();$v3->set_parent_id($variable->get_id());$v3->set_status('publish');$v3->set_regular_price(500);$v3->save();$excluded_variation=$v3->get_id();
+$private_parent=new WC_Product_Variable();$private_parent->set_name('Private parent');$private_parent->set_status('private');$private_parent->save();
+$pv=new WC_Product_Variation();$pv->set_parent_id($private_parent->get_id());$pv->set_status('publish');$pv->set_regular_price(900);$pv->save();$private_child=$pv->get_id();
+foreach(array($private,$draft,$external_id) as $invalid) {
+    try{$engine->start(array('percent'=>20,'products'=>array($invalid)));ok(false,'unsupported exclusion rejected');}catch(RuntimeException $error){ok(true,'unsupported exclusion rejected');}
+}
 ok(SWS_Engine::soft79_status()==='absent','works without SOFT79');
 $detect=WP_PLUGIN_DIR.'/sws-detection'; wp_mkdir_p($detect);
 file_put_contents($detect.'/soft79.php',"<?php\n/*\nPlugin Name: SOFT79 Pricing Rules for WooCommerce\nText Domain: soft79-wc-pricing-rules\n*/"); wp_clean_plugins_cache();
@@ -58,7 +70,7 @@ file_put_contents($detect.'/soft79.php',"<?php\n/*\nPlugin Name: SOFT79 Pricing 
 ok(SWS_Engine::soft79_status()==='inactive_fork','detects installed inactive fork');
 unlink($detect.'/soft79.php'); rmdir($detect); wp_clean_plugins_cache();
 try { $engine->start(array('percent'=>0)); ok(false,'invalid percent rejected'); } catch(RuntimeException $error) { ok(true,'invalid percent rejected'); }
-$engine->start(array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id'])));
+$engine->start(array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id']),'products'=>array($single,$parent2->get_id(),$excluded_variation)));
 run_phase($engine,'active');
 ok(sale($a)===800.0,'20 percent saved against regular price');
 ok(sale($b)===400.0,'product without original sale discounted');
@@ -66,6 +78,12 @@ ok(sale($c)===100.0 && row($c)===null,'better existing sale untouched');
 ok(row($new)===null,'date exclusion');
 ok(row($excluded)===null,'descendant category excluded');
 ok(sale($variation)===1600.0,'variation inherits parent eligibility');
+ok(row($private)===null && wc_get_product($private)->get_sale_price('edit')==='','private product not repriced');
+ok(row($draft)===null && row($external_id)===null,'draft and external products not repriced');
+ok(row($private_child)===null,'published variation of private parent not repriced');
+ok(row($single)===null,'individual product exclusion');
+ok(row($family_variation)===null,'excluding variable parent excludes all its variations');
+ok(row($excluded_variation)===null && row($variation)!==null,'one variation can be excluded without excluding siblings');
 ok(SWS_Engine::snapshot(wc_get_product($e))['from']===null,'original schedule suspended');
 $p=wc_get_product($a); $p->set_regular_price(1200); $p->save();
 ok(sale($a)===960.0,'regular change recomputes campaign sale');
@@ -148,7 +166,13 @@ wp_delete_post($gone,true);ok(row($gone)['status']==='done' && !row($gone)['conf
 $engine->stop();run_phase($engine,'stopped');
 $admin=null; foreach($GLOBALS['wp_filter']['admin_menu']->callbacks[10] as $hook) { if(is_array($hook['function']) && $hook['function'][0] instanceof SWS_Admin) $admin=$hook['function'][0]; }
 ob_start();$admin->render();$html=ob_get_clean();
-ok(strpos($html,'role="switch"')!==false && strpos($html,'categories[]')!==false,'settings page renders switch and selection');
+ok(strpos($html,'role="switch"')!==false && strpos($html,'categories[]')!==false && strpos($html,'products[]')!==false,'settings page renders switch and both selectors');
+ok(strpos($html,'sws-layout')!==false && strpos($html,'sws-sidebar')!==false,'settings page has structured overview layout');
+$found=$admin->search_results('categories','Child');ok(in_array($child['term_id'],array_column($found,'id'),true),'category search finds descendants');
+ok(SWS_Admin::category_label(get_term($child['term_id'],'product_cat'))==='Excluded / Child','category labels include parent path');
+$found=$admin->search_results('products','EXCLUDE-SINGLE');ok(in_array($single,array_column($found,'id'),true),'product search supports SKU');
+$found=$admin->search_results('products','Private');ok(count($found)===0,'product search hides private products and their variations');
+$found=$admin->search_results('products','External');ok(count($found)===0,'product search hides external products');
 // Exact metadata restoration also covers dates attached to an empty original sale.
 $dated=product('Dates without sale',1000);
 $p=wc_get_product($dated);$p->set_date_on_sale_from('2030-01-01');$p->set_date_on_sale_to('2030-01-20');$p->save();
@@ -162,7 +186,7 @@ SWS_Store::unlock($lease);
 // Validate the access guard without allowing wp_die to exit the test process.
 $die_filter=function(){ return function($message){ throw new RuntimeException('denied'); }; };
 add_filter('wp_die_handler',$die_filter,PHP_INT_MAX);
-wp_set_current_user(0); $access=new ReflectionMethod($admin,'access'); $access->setAccessible(true);
+wp_set_current_user(0); ok($admin->search_results('products','Excluded')===array(),'product search denies anonymous requests'); $access=new ReflectionMethod($admin,'access'); $access->setAccessible(true);
 try { $access->invoke($admin); ok(false,'anonymous admin request rejected'); } catch(RuntimeException $error) { ok($error->getMessage()==='denied','anonymous admin request rejected'); }
 wp_set_current_user(1);remove_filter('wp_die_handler',$die_filter,PHP_INT_MAX);
 restore_error_handler();

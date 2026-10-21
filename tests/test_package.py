@@ -30,7 +30,7 @@ class PackageTests(unittest.TestCase):
 
     def test_tag_must_match_header(self):
         with self.assertRaisesRegex(ValueError, 'does not match'):
-            release.build(self.root, self.output, 'v0.2.0')
+            release.build(self.root, self.output, 'v99.0.0')
 
     def test_reproducible_archive(self):
         first = release.build(self.root, self.output).read_bytes()

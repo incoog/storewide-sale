@@ -57,6 +57,16 @@ final class SWS_Engine {
                     $categories[] = (int) $id;
                 }
             }
+            $products = array();
+            if ( ! empty( $input['products'] ) ) {
+                if ( ! is_array( $input['products'] ) ) { throw new RuntimeException( 'Produktlistan är ogiltig.' ); }
+                foreach ( $input['products'] as $id ) {
+                    if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! self::supported_product( wc_get_product( (int) $id ), true ) ) {
+                        throw new RuntimeException( 'En vald produkt är inte publicerad eller kan inte väljas. Ta bort den från undantagen och försök igen.' );
+                    }
+                    $products[] = (int) $id;
+                }
+            }
             $excluded = $categories;
             foreach ( $categories as $id ) {
                 $children = get_term_children( $id, 'product_cat' );
@@ -67,7 +77,7 @@ final class SWS_Engine {
             $max = (int) $wpdb->get_var( "SELECT MAX(ID) FROM $wpdb->posts WHERE post_type IN ('product','product_variation')" );
             $state = array(
                 'id' => wp_generate_uuid4(), 'phase' => 'starting', 'percent' => (float) $percent,
-                'cutoff' => $cutoff, 'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ),
+                'cutoff' => $cutoff, 'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ), 'products' => array_values( array_unique( $products ) ),
                 'soft79' => ! empty( $input['soft79'] ) && 'fork' === self::soft79_status(),
                 'cursor' => 0, 'max_id' => $max, 'checked' => 0, 'skipped' => 0,
                 'started' => time(), 'finished' => null, 'error' => '',
@@ -98,10 +108,20 @@ final class SWS_Engine {
             SWS_Store::state( $state );
         } finally { SWS_Store::unlock( $token ); }
     }
+    public static function supported_product( $product, $allow_parents = false ) {
+        $types = $allow_parents ? array( 'simple', 'variation', 'variable' ) : array( 'simple', 'variation' );
+        if ( ! ( $product instanceof WC_Product ) || ! $product->is_type( $types ) || 'publish' !== $product->get_status( 'edit' ) ) { return false; }
+        if ( $product->is_type( 'variation' ) ) {
+            $parent = wc_get_product( $product->get_parent_id() );
+            return $parent && $parent->is_type( 'variable' ) && 'publish' === $parent->get_status( 'edit' );
+        }
+        return true;
+    }
     private function eligible( $product, $state ) {
-        if ( ! $product->is_type( array( 'simple', 'variation', 'external' ) ) ) { return false; }
+        if ( ! self::supported_product( $product ) ) { return false; }
         $parent = $product->get_parent_id() ? wc_get_product( $product->get_parent_id() ) : $product;
-        if ( ! $parent || ! in_array( $parent->get_status( 'edit' ), array( 'publish', 'private' ), true ) ) { return false; }
+        $excluded_products = isset( $state['products'] ) ? $state['products'] : array();
+        if ( in_array( $product->get_id(), $excluded_products, true ) || in_array( $parent->get_id(), $excluded_products, true ) ) { return false; }
         $created = $parent->get_date_created( 'edit' );
         if ( $state['cutoff'] && ( ! $created || $created->date( 'Y-m-d' ) > $state['cutoff'] ) ) { return false; }
         $terms = wp_get_object_terms( $parent->get_id(), 'product_cat', array( 'fields' => 'ids' ) );
@@ -245,7 +265,7 @@ final class SWS_Engine {
             if ( ! empty( $counts['pending'] ) || ! empty( $counts['restoring'] ) ) { $this->schedule(); return; }
             if ( 'starting' === $state['phase'] ) {
                 global $wpdb;
-                $ids = $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM $wpdb->posts WHERE post_type IN ('product','product_variation') AND post_status IN ('publish','private') AND ID>%d AND ID<=%d ORDER BY ID LIMIT 20", $state['cursor'], $state['max_id'] ) );
+                $ids = $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM $wpdb->posts WHERE post_type IN ('product','product_variation') AND post_status='publish' AND ID>%d AND ID<=%d ORDER BY ID LIMIT 20", $state['cursor'], $state['max_id'] ) );
                 if ( $wpdb->last_error ) { throw new RuntimeException( 'Kunde inte läsa produktkatalogen.' ); }
                 foreach ( $ids as $id ) {
                     $id = (int) $id;

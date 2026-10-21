@@ -1,12 +1,12 @@
 # Storewide Sale for WooCommerce
 
-Apply one percentage discount to many products, exclude recent products or categories, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.1.0 is an initial version for staging evaluation.
+Apply one percentage discount to many products, exclude recent products or categories, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.2.0 is for staging evaluation.
 
 ## Installation
 
 [Download the installable ZIP from Releases](https://github.com/incoog/storewide-sale/releases). The repository source archive also contains development tools; use the release asset for WordPress installation.
 
-Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.1.0.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
+Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.2.0.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
 
 There is no build step or runtime dependency on another discount plugin. The ZIP contains the plugin, this README and its licence. Test tooling is not included.
 
@@ -16,14 +16,15 @@ There is no build step or runtime dependency on another discount plugin. The ZIP
 | --- | --- |
 | Percentage | A discount greater than 0 and up to 100%, calculated from the current regular price, rounded to the store's price decimals |
 | Created after | Exclude products created after the selected date, in the site's timezone; the selected day is included |
-| Categories | Exclude selected categories and their descendants |
+| Categories | Search and select category chips; selected categories and their descendants are excluded |
 | Variations | Use their own prices and their parent's creation date and categories |
 | Existing lower sale | Leave an already active sale unchanged if it is as low as, or lower than, the proposed campaign price |
-| Catalog scope | Published/private simple products, external products and variations existing when activation begins; parent/grouped/custom product types are not repriced |
+| Individual products | Exclude one product or variation; selecting a variable parent excludes all of its variations |
+| Catalog scope | Published simple products and published variations with a published variable parent, existing when activation begins; private/draft/external/grouped/custom product types are not repriced |
 
 The campaign writes WooCommerce sale prices through product CRUD. It stores the original sale price, sale timestamps and original regular price before the first write. Original regular prices are recorded for comparisons, never written back. Existing sale schedules are suspended for managed products and restored with their original timestamps. A schedule that has expired while the campaign ran is not extended.
 
-Percentage, date and category settings stay fixed during a campaign. Products created after activation are not automatically enrolled, and later category changes do not re-evaluate membership. Finish the campaign and start another to change the selection.
+Percentage, date, category and individual-product settings stay fixed during a campaign. Products created after activation are not automatically enrolled, and later category changes do not re-evaluate membership. Finish the campaign and start another to change the selection.
 
 ## Price changes during a campaign
 
@@ -69,20 +70,29 @@ The initial implementation passed 71 integration assertions in WordPress 7.1.3, 
 
 Test representative products, tax/currency rounding, existing scheduled sales, category exclusions, variation prices, other price-changing extensions and your actual cart/checkout on staging before live use. This plugin sets ordinary product sale prices; ordinary coupon rules still apply. It does not claim tested compatibility with every product type, cache, currency extension or checkout implementation.
 
+## Build a ZIP when you choose
+
+On GitHub, open **Actions → Build installable ZIP → Run workflow**, choose `main` (or another branch), then press **Run workflow** again. After all tests pass, open that run and download `storewide-sale-0.2.0.zip` under **Artifacts**. That file can be uploaded to WordPress directly; no extraction is needed. Building a ZIP does not publish a release or change a store. Version tags can also prepare a draft release, with publication remaining a separate step.
+
 ## Development and automated checks
 
 GitHub Actions runs on pushes to `main`, pull requests and version tags. It checks PHP syntax on 7.4, 8.3 and 8.5; tests the admin polling script with Node's built-in test runner; verifies the ZIP builder; and runs the full product-price/restoration fixtures against a real WordPress/WooCommerce installation with MySQL 8. Two integration combinations are exercised: WordPress 6.5 / WooCommerce 8.0.0 / PHP 7.4, and current WordPress / WooCommerce / PHP 8.3. The SOFT79 fixture is a separate checkout pinned to commit `7923cba7f27c44e081c442e1e7b09d246da01b92`; SOFT79 code is not bundled in this plugin.
 
-Fast development commands are `node --test tests/admin.test.cjs`, `python3 -m unittest discover -s tests -p 'test_*.py' -v` and `python3 scripts/build_release.py`. No npm dependencies are needed. The package builder includes only the main PHP file, `includes`, `assets`, README and LICENSE. Its ZIP has one `storewide-sale` root directory. Every successful workflow uploads this installable ZIP as an Actions artifact. A version-tag workflow validates the tag against the PHP header and prepares a draft release with the ZIP; publishing remains an explicit step.
+Fast development commands are `node --test tests/admin.test.cjs tests/selectors.test.cjs`, `python3 -m unittest discover -s tests -p 'test_*.py' -v` and `python3 scripts/build_release.py`. These fast tests use built-in runtimes without third-party packages. Browser tests use the locked Playwright development dependency (`npm ci`, `npx playwright install chromium`, then `npm run test:browser` against the disposable WordPress site). The runtime search widgets use WooCommerce's own SelectWoo component. No JavaScript library is bundled with the plugin. The package builder includes only the main PHP file, `includes`, `assets`, README and LICENSE. Its ZIP has one `storewide-sale` root directory. Every successful workflow uploads this installable ZIP as an Actions artifact. A version-tag workflow validates the tag against the PHP header and prepares a draft release with the ZIP; publishing remains an explicit step.
 
 The integration script creates product fixtures and changes prices. Run it only on a disposable, empty test site. It requires CLI, `SWS_TEST_RUN=1`, a site option `sws_test_environment=disposable`, no existing product posts/campaign and `SWS_SOFT79_FILE` pointing to the separately checked-out fork entry point. Use `SWS_TEST_RUN=1 SWS_SOFT79_FILE=/absolute/path/to/soft79-wc-pricing-rules.php wp eval-file /absolute/path/to/storewide-sale/tests/integration.php --path=/absolute/path/to/disposable-wordpress` after installing WooCommerce and activating this plugin. `scripts/ci-integration.sh` provisions that environment in Actions using its dedicated MySQL service.
 
 ## Changelog
 
-### Unreleased
+### 0.2.0, 2026-10-21
 
 | Type | Change |
 | --- | --- |
+| Changed | Restrict new campaigns to published simple products and published variations with a published variable parent |
+| Added | Searchable category and product exclusions with removable chips; exclude variable parents or individual variations |
+| Changed | Card layout with a campaign overview, clearer status and responsive stacking on small screens |
+| Added | A dedicated manual Build installable ZIP action, with testing before packaging and no automatic publication |
+| Added | Browser tests for real WooCommerce search widgets, chip removal, responsive layout and the start/stop flow |
 | Added | Repeatable WordPress/WooCommerce integration tests against MySQL, covering price restoration, conflicts, manual overrides, recovery, deletion, access guards and SOFT79 detection |
 | Added | PHP compatibility checks, admin polling tests and package tests in GitHub Actions |
 | Added | Reproducible installation ZIP builder, workflow artifacts and draft release preparation for version tags |

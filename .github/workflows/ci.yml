@@ -6,6 +6,7 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -35,7 +36,7 @@ jobs:
   integration:
     name: WordPress ${{ matrix.wp }}, WooCommerce ${{ matrix.wc }}, PHP ${{ matrix.php }}, MySQL
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +80,35 @@ jobs:
           WC_VERSION: ${{ matrix.wc }}
           SWS_SOFT79_FILE: ${{ github.workspace }}/.test-deps/soft79/soft79-wc-pricing-rules.php
         run: bash scripts/ci-integration.sh
+      - uses: actions/setup-node@v6
+        if: matrix.php == '8.3'
+        with:
+          node-version: '24'
+      - name: Install browser test tools
+        if: matrix.php == '8.3'
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Prepare browser test site
+        if: matrix.php == '8.3'
+        env:
+          WP_ROOT: ${{ runner.temp }}/sws-wordpress
+        run: |
+          wp option update home http://127.0.0.1:8080 --path="$WP_ROOT" --quiet
+          wp option update siteurl http://127.0.0.1:8080 --path="$WP_ROOT" --quiet
+          SWS_TEST_RUN=1 wp eval-file "$GITHUB_WORKSPACE/tests/ui-fixtures.php" --path="$WP_ROOT"
+          php -S 127.0.0.1:8080 -t "$WP_ROOT" > "$RUNNER_TEMP/sws-server.log" 2>&1 &
+          curl --retry 10 --retry-connrefused --retry-delay 1 --fail --silent http://127.0.0.1:8080/wp-login.php > /dev/null
+      - name: Test actual WooCommerce search widgets and responsive layout
+        if: matrix.php == '8.3'
+        run: npm run test:browser
+      - name: Save UI screenshots and failure traces
+        if: always() && matrix.php == '8.3'
+        uses: actions/upload-artifact@v7
+        with:
+          name: settings-ui
+          path: test-results/
+          if-no-files-found: ignore
 
   frontend:
     name: Admin polling and package tests
@@ -89,7 +119,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-      - run: node --test tests/admin.test.cjs
+      - run: node --test tests/admin.test.cjs tests/selectors.test.cjs
       - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
 
   package:

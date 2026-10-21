@@ -1,0 +1,11 @@
+name: Build installable ZIP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-build:
+    uses: ./.github/workflows/ci.yml

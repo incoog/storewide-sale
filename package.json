@@ -1,0 +1,9 @@
+{
+  "name": "storewide-sale-development",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/admin.test.cjs tests/selectors.test.cjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": { "@playwright/test": "1.61.0" }
+}
