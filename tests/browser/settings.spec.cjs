@@ -21,7 +21,7 @@ async function select(page, kind, query, result) {
     await page.getByRole('heading', { name: 'Storewide Sale', exact: true }).click();
 }
 
-test('searchable chips, campaign overview and full start/stop flow', async ({ page }) => {
+test('save settings without activation, searchable chips and full start/stop flow', async ({ page }) => {
     // Two asynchronous batch phases and their page loads need their own time budget.
     test.setTimeout(120000);
     await login(page);
@@ -36,6 +36,25 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await expect(page.locator('#sws-summary-percent')).toHaveText('15');
     await expect(page.locator('#sws-summary-categories')).toHaveText('1');
     await expect(page.locator('#sws-summary-products')).toHaveText('1');
+    const soft79 = page.getByRole('checkbox', { name: 'Undanta kampanjprodukter från SOFT79' });
+    await soft79.check();
+    await page.getByRole('button', { name: 'Spara inställningar', exact: true }).click();
+    await expect(page.locator('.notice-success')).toContainText('Inställningarna har sparats');
+    await expect(page.locator('.sws-status-stopped')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('#sws-percent')).toHaveValue('15');
+    await expect(page.locator('#sws-cutoff')).toHaveValue('2024-12-31');
+    await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
+    await expect(page.locator('#sws-products + .select2 .select2-selection__choice')).toContainText('UI Vas');
+    await expect(soft79).toBeChecked();
+    await expect(page.getByRole('switch', { name: 'Aktivera kampanj' })).toBeVisible();
+    // Unchecking an option must also persist, and activation still accepts unsaved edits.
+    await soft79.uncheck();
+    await page.getByRole('button', { name: 'Spara inställningar', exact: true }).click();
+    await expect(page.locator('.notice-success')).toBeVisible();
+    await page.reload();
+    await expect(soft79).not.toBeChecked();
+    await soft79.check();
     const left = await page.locator('.sws-main').boundingBox();
     const right = await page.locator('.sws-sidebar').boundingBox();
     expect(right.x).toBeGreaterThanOrEqual(left.x + left.width);
@@ -49,6 +68,8 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await expect(page.locator('.sws-status-active')).toBeVisible({ timeout: 45000 });
     await page.waitForLoadState('load', { timeout: 30000 });
     await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
+    await expect(soft79).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Spara inställningar', exact: true })).toHaveCount(0);
     console.log('Active page animation frame:', await page.evaluate(() => Promise.race([new Promise(resolve => requestAnimationFrame(() => resolve({ frame: true }))), new Promise(resolve => setTimeout(() => resolve({ frame: false, visibility: document.visibilityState, ready: document.readyState, raf: String(requestAnimationFrame), animations: document.getAnimations().length }), 1500))])));
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });

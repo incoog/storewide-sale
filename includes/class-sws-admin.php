@@ -44,6 +44,10 @@ final class SWS_Admin {
             $state = SWS_Store::campaign();
             if ( 'start' !== $command && $this->field( 'campaign' ) !== ( isset( $state['id'] ) ? $state['id'] : '' ) ) { throw new RuntimeException( 'Kampanjen har ändrats. Ladda om sidan.' ); }
             if ( 'start' === $command ) { $this->engine->start( wp_unslash( $_POST ) ); }
+            elseif ( 'save' === $command ) {
+                $this->engine->save_settings( wp_unslash( $_POST ) );
+                set_transient( 'sws_notice_' . get_current_user_id(), array( 'type' => 'success', 'message' => 'Inställningarna har sparats. Kampanjen är fortfarande avstängd.' ), 90 );
+            }
             elseif ( 'stop' === $command ) { $this->engine->stop(); }
             elseif ( 'retry' === $command ) { $this->engine->process(); }
             elseif ( 'integration' === $command ) { $this->engine->integration( '1' === $this->field( 'soft79' ) ); }
@@ -124,7 +128,9 @@ final class SWS_Admin {
     private function form( $command, $state ) {
         echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="sws-form">';
         wp_nonce_field( 'sws_action' );
-        echo '<input type="hidden" name="action" value="sws_action"><input type="hidden" name="command" value="' . esc_attr( $command ) . '"><input type="hidden" name="campaign" value="' . esc_attr( isset( $state['id'] ) ? $state['id'] : '' ) . '">';
+        echo '<input type="hidden" name="action" value="sws_action">';
+        if ( 'start' !== $command ) { echo '<input type="hidden" name="command" value="' . esc_attr( $command ) . '">'; }
+        echo '<input type="hidden" name="campaign" value="' . esc_attr( isset( $state['id'] ) ? $state['id'] : '' ) . '">';
     }
     private function money( $price ) { return '' === $price ? 'Inget reapris' : wc_price( $price ); }
     private function soft79( $state, $running ) {
@@ -172,7 +178,12 @@ final class SWS_Admin {
         $labels = array( 'starting' => 'Aktiveras', 'active' => 'Aktiv', 'stopping' => 'Återställs', 'stopped' => 'Avstängd' );
         echo '<div class="wrap sws"><header class="sws-header"><div><p class="sws-eyebrow">WOOCOMMERCE</p><h1>Storewide Sale</h1><p>En gemensam rabatt. Full kontroll när kampanjen är över.</p></div><span class="sws-status sws-status-' . esc_attr( $phase ) . '"><span aria-hidden="true"></span>' . esc_html( $labels[ $phase ] ) . '</span></header>';
         $notice = get_transient( 'sws_notice_' . get_current_user_id() );
-        if ( $notice ) { delete_transient( 'sws_notice_' . get_current_user_id() ); echo '<div class="notice notice-error"><p>' . esc_html( $notice ) . '</p></div>'; }
+        if ( $notice ) {
+            delete_transient( 'sws_notice_' . get_current_user_id() );
+            $success = is_array( $notice ) && isset( $notice['type'] ) && 'success' === $notice['type'];
+            $message = is_array( $notice ) ? $notice['message'] : $notice;
+            echo '<div class="notice notice-' . ( $success ? 'success' : 'error' ) . '"><p>' . esc_html( $message ) . '</p></div>';
+        }
         if ( ! $running ) {
             $this->form( 'start', $state );
             echo '<div class="sws-layout"><div class="sws-main"><section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-tag" aria-hidden="true"></span><h2>Kampanjrabatt</h2></div><p>Rabatten beräknas från produktens ordinarie pris.</p><label for="sws-percent" class="sws-field-label">Procentrabatt</label><div class="sws-percent-input"><input id="sws-percent" name="percent" type="number" min="0.01" max="100" step="0.01" value="' . esc_attr( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '" required aria-describedby="sws-percent-help"><span aria-hidden="true">%</span></div><p id="sws-percent-help" class="description">Tidigare reapriser sparas och kan återställas när kampanjen avslutas.</p></section>';
@@ -185,7 +196,7 @@ final class SWS_Admin {
             $this->soft79( $state, false );
             echo '</div><aside class="sws-sidebar"><section class="sws-card sws-overview"><h2>Kampanjöversikt</h2>';
             $this->scope_summary( $state );
-            echo '<div class="sws-action-area"><button class="sws-switch" type="submit" role="switch" aria-checked="false"><span aria-hidden="true"></span> Aktivera kampanj</button><p>Du avslutar och återställer kampanjen från den här sidan.</p></div><div class="sws-scope-note"><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><p>Omfattar publicerade enkla produkter och publicerade variationer med en publicerad huvudprodukt.</p></div><p class="sws-fine-print">En befintlig aktiv rea med samma eller lägre pris lämnas orörd.</p></section></aside></div></form>';
+            echo '<div class="sws-action-area"><button class="button button-secondary sws-save" type="submit" name="command" value="save">Spara inställningar</button><p class="sws-save-help">Sparar dina val utan att aktivera kampanjen.</p><button class="sws-switch" type="submit" name="command" value="start" role="switch" aria-checked="false"><span aria-hidden="true"></span> Aktivera kampanj</button><p>Du avslutar och återställer kampanjen från den här sidan.</p></div><div class="sws-scope-note"><span class="dashicons dashicons-yes-alt" aria-hidden="true"></span><p>Omfattar publicerade enkla produkter och publicerade variationer med en publicerad huvudprodukt.</p></div><p class="sws-fine-print">En befintlig aktiv rea med samma eller lägre pris lämnas orörd.</p></section></aside></div></form>';
         } else {
             echo '<div class="sws-layout"><div class="sws-main"><section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-chart-bar" aria-hidden="true"></span><h2>Kampanjen just nu</h2></div><div class="sws-metrics">';
             foreach ( array( 'managed' => 'Automatiskt hanterade', 'manual' => 'Manuellt ändrade', 'done' => 'Återställda / klara' ) as $key => $label ) {

@@ -37,51 +37,67 @@ final class SWS_Engine {
     public function schedule( $delay = 10 ) {
         if ( ! wp_next_scheduled( self::JOB ) ) { wp_schedule_single_event( time() + $delay, self::JOB ); }
     }
+    private function settings( $input ) {
+        $percent = isset( $input['percent'] ) && is_scalar( $input['percent'] ) ? wc_format_decimal( $input['percent'] ) : '';
+        if ( ! is_numeric( $percent ) || (float) $percent <= 0 || (float) $percent > 100 ) {
+            throw new RuntimeException( 'Ange en procentrabatt större än 0 och högst 100.' );
+        }
+        $cutoff = isset( $input['cutoff'] ) && is_string( $input['cutoff'] ) ? $input['cutoff'] : '';
+        $date = $cutoff ? DateTimeImmutable::createFromFormat( '!Y-m-d', $cutoff, wp_timezone() ) : false;
+        if ( $cutoff && ( ! $date || $date->format( 'Y-m-d' ) !== $cutoff ) ) { throw new RuntimeException( 'Välj ett giltigt datum.' ); }
+        $categories = array();
+        if ( ! empty( $input['categories'] ) ) {
+            if ( ! is_array( $input['categories'] ) ) { throw new RuntimeException( 'Kategorilistan är ogiltig.' ); }
+            foreach ( $input['categories'] as $id ) {
+                if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! term_exists( (int) $id, 'product_cat' ) ) { throw new RuntimeException( 'En vald kategori finns inte.' ); }
+                $categories[] = (int) $id;
+            }
+        }
+        $products = array();
+        if ( ! empty( $input['products'] ) ) {
+            if ( ! is_array( $input['products'] ) ) { throw new RuntimeException( 'Produktlistan är ogiltig.' ); }
+            foreach ( $input['products'] as $id ) {
+                if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! self::supported_product( wc_get_product( (int) $id ), true ) ) {
+                    throw new RuntimeException( 'En vald produkt är inte publicerad eller kan inte väljas. Ta bort den från undantagen och försök igen.' );
+                }
+                $products[] = (int) $id;
+            }
+        }
+        $excluded = $categories;
+        foreach ( $categories as $id ) {
+            $children = get_term_children( $id, 'product_cat' );
+            if ( is_wp_error( $children ) ) { throw new RuntimeException( 'Kunde inte läsa underkategorier.' ); }
+            $excluded = array_merge( $excluded, array_map( 'intval', $children ) );
+        }
+        return array(
+            'percent' => (float) $percent, 'cutoff' => $cutoff,
+            'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ),
+            'products' => array_values( array_unique( $products ) ),
+            'soft79' => ! empty( $input['soft79'] ) && 'fork' === self::soft79_status(),
+        );
+    }
+    public function save_settings( $input ) {
+        $token = SWS_Store::lock();
+        try {
+            $state = SWS_Store::campaign();
+            if ( self::running( $state ) ) { throw new RuntimeException( 'Avsluta den pågående kampanjen innan du ändrar inställningarna.' ); }
+            $settings = $this->settings( $input );
+            SWS_Store::state( array_merge( $state, $settings, array( 'phase' => 'stopped' ) ) );
+        } finally { SWS_Store::unlock( $token ); }
+    }
     public function start( $input ) {
         $token = SWS_Store::lock();
         try {
             $previous = SWS_Store::campaign();
             if ( self::running( $previous ) ) { throw new RuntimeException( 'Avsluta den pågående kampanjen först.' ); }
-            $percent = isset( $input['percent'] ) && is_scalar( $input['percent'] ) ? wc_format_decimal( $input['percent'] ) : '';
-            if ( ! is_numeric( $percent ) || (float) $percent <= 0 || (float) $percent > 100 ) {
-                throw new RuntimeException( 'Ange en procentrabatt större än 0 och högst 100.' );
-            }
-            $cutoff = isset( $input['cutoff'] ) && is_string( $input['cutoff'] ) ? $input['cutoff'] : '';
-            $date = $cutoff ? DateTimeImmutable::createFromFormat( '!Y-m-d', $cutoff, wp_timezone() ) : false;
-            if ( $cutoff && ( ! $date || $date->format( 'Y-m-d' ) !== $cutoff ) ) { throw new RuntimeException( 'Välj ett giltigt datum.' ); }
-            $categories = array();
-            if ( ! empty( $input['categories'] ) ) {
-                if ( ! is_array( $input['categories'] ) ) { throw new RuntimeException( 'Kategorilistan är ogiltig.' ); }
-                foreach ( $input['categories'] as $id ) {
-                    if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! term_exists( (int) $id, 'product_cat' ) ) { throw new RuntimeException( 'En vald kategori finns inte.' ); }
-                    $categories[] = (int) $id;
-                }
-            }
-            $products = array();
-            if ( ! empty( $input['products'] ) ) {
-                if ( ! is_array( $input['products'] ) ) { throw new RuntimeException( 'Produktlistan är ogiltig.' ); }
-                foreach ( $input['products'] as $id ) {
-                    if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! self::supported_product( wc_get_product( (int) $id ), true ) ) {
-                        throw new RuntimeException( 'En vald produkt är inte publicerad eller kan inte väljas. Ta bort den från undantagen och försök igen.' );
-                    }
-                    $products[] = (int) $id;
-                }
-            }
-            $excluded = $categories;
-            foreach ( $categories as $id ) {
-                $children = get_term_children( $id, 'product_cat' );
-                if ( is_wp_error( $children ) ) { throw new RuntimeException( 'Kunde inte läsa underkategorier.' ); }
-                $excluded = array_merge( $excluded, array_map( 'intval', $children ) );
-            }
+            $settings = $this->settings( $input );
             global $wpdb;
             $max = (int) $wpdb->get_var( "SELECT MAX(ID) FROM $wpdb->posts WHERE post_type IN ('product','product_variation')" );
-            $state = array(
-                'id' => wp_generate_uuid4(), 'phase' => 'starting', 'percent' => (float) $percent,
-                'cutoff' => $cutoff, 'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ), 'products' => array_values( array_unique( $products ) ),
-                'soft79' => ! empty( $input['soft79'] ) && 'fork' === self::soft79_status(),
+            $state = array_merge( $settings, array(
+                'id' => wp_generate_uuid4(), 'phase' => 'starting',
                 'cursor' => 0, 'max_id' => $max, 'checked' => 0, 'skipped' => 0,
                 'started' => time(), 'finished' => null, 'error' => '',
-            );
+            ) );
             SWS_Store::state( $state );
             $this->schedule();
         } finally { SWS_Store::unlock( $token ); }

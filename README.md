@@ -1,12 +1,12 @@
 # Storewide Sale for WooCommerce
 
-Apply one percentage discount to many products, exclude recent products or categories, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.2.0 is for staging evaluation.
+Apply one percentage discount to many products, exclude recent products or categories, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.2.1 is for staging evaluation.
 
 ## Installation
 
 [Download the installable ZIP from Releases](https://github.com/incoog/storewide-sale/releases). The repository source archive also contains development tools; use the release asset for WordPress installation.
 
-Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.2.0.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
+Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.2.1.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
 
 There is no build step or runtime dependency on another discount plugin. The ZIP contains the plugin, this README and its licence. Test tooling is not included.
 
@@ -21,6 +21,8 @@ There is no build step or runtime dependency on another discount plugin. The ZIP
 | Existing lower sale | Leave an already active sale unchanged if it is as low as, or lower than, the proposed campaign price |
 | Individual products | Exclude one product or variation; selecting a variable parent excludes all of its variations |
 | Catalog scope | Published simple products and published variations with a published variable parent, existing when activation begins; private/draft/external/grouped/custom product types are not repriced |
+
+Before activation, use **Spara inställningar** to save the percentage, date cutoff, category and product exclusions, and SOFT79 preference. Saving leaves the campaign stopped, does not schedule processing and does not change product prices. The saved choices are restored when you return to the page. **Aktivera kampanj** starts a campaign using the choices currently shown, including any unsaved edits.
 
 The campaign writes WooCommerce sale prices through product CRUD. It stores the original sale price, sale timestamps and original regular price before the first write. Original regular prices are recorded for comparisons, never written back. Existing sale schedules are suspended for managed products and restored with their original timestamps. A schedule that has expired while the campaign ran is not extended.
 
@@ -72,7 +74,7 @@ Test representative products, tax/currency rounding, existing scheduled sales, c
 
 ## Build a ZIP when you choose
 
-On GitHub, open **Actions → Build installable ZIP → Run workflow**, choose `main` (or another branch), then press **Run workflow** again. After all tests pass, open that run and download `storewide-sale-0.2.0.zip` under **Artifacts**. That file can be uploaded to WordPress directly; no extraction is needed. Building a ZIP does not publish a release or change a store. Version tags can also prepare a draft release, with publication remaining a separate step.
+On GitHub, open **Actions → Build installable ZIP → Run workflow**, choose `main` (or another branch), then press **Run workflow** again. After all tests pass, open that run and download `storewide-sale-0.2.1.zip` under **Artifacts**. That file can be uploaded to WordPress directly; no extraction is needed. Building a ZIP does not publish a release or change a store. Version tags can also prepare a draft release, with publication remaining a separate step.
 
 ## Development and automated checks
 
@@ -83,6 +85,13 @@ Fast development commands are `node --test tests/admin.test.cjs tests/selectors.
 The integration script creates product fixtures and changes prices. Run it only on a disposable, empty test site. It requires CLI, `SWS_TEST_RUN=1`, a site option `sws_test_environment=disposable`, no existing product posts/campaign and `SWS_SOFT79_FILE` pointing to the separately checked-out fork entry point. Use `SWS_TEST_RUN=1 SWS_SOFT79_FILE=/absolute/path/to/soft79-wc-pricing-rules.php wp eval-file /absolute/path/to/storewide-sale/tests/integration.php --path=/absolute/path/to/disposable-wordpress` after installing WooCommerce and activating this plugin. `scripts/ci-integration.sh` provisions that environment in Actions using its dedicated MySQL service.
 
 ## Changelog
+
+### 0.2.1, 2026-10-21
+
+| Type | Change |
+| --- | --- |
+| Added | Save campaign settings without activation, including percentage, date cutoff, category/product exclusions and SOFT79 preference |
+| Added | Saved confirmation and persistence checks covering reloads, cleared choices and unchanged product prices |
 
 ### 0.2.0, 2026-10-21
 

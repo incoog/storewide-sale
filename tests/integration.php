@@ -70,8 +70,20 @@ file_put_contents($detect.'/soft79.php',"<?php\n/*\nPlugin Name: SOFT79 Pricing 
 ok(SWS_Engine::soft79_status()==='inactive_fork','detects installed inactive fork');
 unlink($detect.'/soft79.php'); rmdir($detect); wp_clean_plugins_cache();
 try { $engine->start(array('percent'=>0)); ok(false,'invalid percent rejected'); } catch(RuntimeException $error) { ok(true,'invalid percent rejected'); }
-$engine->start(array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id']),'products'=>array($single,$parent2->get_id(),$excluded_variation)));
+// Saving a setup must never enroll products, change prices or start background work.
+$settings=array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id']),'products'=>array($single,$parent2->get_id(),$excluded_variation));
+$before_save=SWS_Engine::snapshot(wc_get_product($a)); $scheduled=wp_next_scheduled(SWS_Engine::JOB);
+$engine->save_settings($settings); $saved=SWS_Store::campaign();
+ok($saved['phase']==='stopped' && empty($saved['id']),'saving settings does not create a campaign');
+ok($saved['percent']===20.0 && $saved['cutoff']==='2024-12-31' && $saved['categories']===array($cat['term_id']) && $saved['products']===$settings['products'],'saves percentage date category and product choices');
+ok(wp_next_scheduled(SWS_Engine::JOB)===$scheduled && SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($a)),$before_save) && (int)$wpdb->get_var('SELECT COUNT(*) FROM '.SWS_Store::table())===0,'saving leaves product prices journal and scheduled work unchanged');
+try { $engine->save_settings(array('percent'=>0)); ok(false,'invalid saved settings rejected'); } catch(RuntimeException $error) { ok(SWS_Store::campaign()===$saved,'invalid saved settings do not overwrite previous choices'); }
+$engine->save_settings(array('percent'=>15));
+ok(SWS_Store::campaign()['categories']===array() && SWS_Store::campaign()['products']===array() && SWS_Store::campaign()['cutoff']==='','saved exclusions and date can be cleared');
+$engine->start($settings);
 run_phase($engine,'active');
+$active=SWS_Store::campaign();
+try { $engine->save_settings(array('percent'=>10)); ok(false,'saving during active campaign rejected'); } catch(RuntimeException $error) { ok(SWS_Store::campaign()===$active,'saving cannot overwrite an active campaign'); }
 ok(sale($a)===800.0,'20 percent saved against regular price');
 ok(sale($b)===400.0,'product without original sale discounted');
 ok(sale($c)===100.0 && row($c)===null,'better existing sale untouched');
@@ -117,6 +129,13 @@ ok(sale($b)===350.0 && (float)wc_get_product($b)->get_regular_price('edit')===55
 ok(wc_get_product($d)->get_sale_price('edit')==='','manual remove clears sale');
 ok(SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($e)),$dates),'restores original sale and timestamps exactly');
 ok(apply_filters('soft79_wcpr_product_pricing_enabled',true,wc_get_product($a))===true,'SOFT79 released after restoration');
+$finished=SWS_Store::campaign(); $original_journal=row($a);
+$engine->save_settings(array('percent'=>17,'categories'=>array($child['term_id']),'soft79'=>1));
+$saved=SWS_Store::campaign();
+ok($saved['phase']==='stopped' && $saved['id']===$finished['id'] && row($a)===$original_journal,'saving after completion preserves the finished campaign journal');
+ok($saved['soft79']===true,'SOFT79 preference can be saved without activation');
+$engine->save_settings(array('percent'=>17));
+ok(SWS_Store::campaign()['soft79']===false,'SOFT79 preference can be unchecked and saved');
 // New campaign verifies preserved amount, manual override of a conflict and interrupted writes.
 $engine->start(array('percent'=>25)); run_phase($engine,'active');
 $p=wc_get_product($a); $p->set_regular_price(1400); $p->save(); $s=SWS_Store::campaign(); $engine->decide($a,'amount',row($a)['regular'],$s['id']);
@@ -182,6 +201,7 @@ ok(SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($dated)),$empty_schedule
 // Concurrent commands must fail instead of overwriting one another.
 $lease=SWS_Store::lock();
 try { $engine->start(array('percent'=>20)); ok(false,'concurrent command rejected'); } catch(RuntimeException $error) { ok(true,'concurrent command rejected'); }
+try { $engine->save_settings(array('percent'=>15)); ok(false,'concurrent settings save rejected'); } catch(RuntimeException $error) { ok(true,'concurrent settings save rejected'); }
 SWS_Store::unlock($lease);
 // Validate the access guard without allowing wp_die to exit the test process.
 $die_filter=function(){ return function($message){ throw new RuntimeException('denied'); }; };
