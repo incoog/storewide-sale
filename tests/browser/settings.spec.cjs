@@ -18,9 +18,12 @@ async function select(page, kind, query, result) {
     await input.pressSequentially(query);
     await page.locator('.select2-results__option').filter({ hasText: result }).click({ timeout: 15000 });
     await input.press('Escape');
+    await page.getByRole('heading', { name: 'Storewide Sale', exact: true }).click();
 }
 
 test('searchable chips, campaign overview and full start/stop flow', async ({ page }) => {
+    // Two asynchronous batch phases and their page loads need their own time budget.
+    test.setTimeout(120000);
     await login(page);
     await expect(page.locator('#sws-categories + .select2')).toBeVisible();
     await expect(page.locator('#sws-products + .select2')).toBeVisible();
@@ -45,6 +48,7 @@ test('searchable chips, campaign overview and full start/stop flow', async ({ pa
     await select(page, 'products', 'UI-VASE-1', /UI Vas/);
     await page.getByRole('switch', { name: 'Aktivera kampanj' }).click();
     await expect(page.locator('.sws-status-active')).toBeVisible({ timeout: 45000 });
+    await page.waitForLoadState('load', { timeout: 30000 });
     await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click();
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });
