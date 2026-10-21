@@ -1,0 +1,17 @@
+.sws { max-width: 1100px; }
+.sws-card { background: #fff; border: 1px solid #dcdcde; border-radius: 5px; margin: 20px 0; padding: 20px 24px; }
+.sws-card h2 { margin-top: 0; }
+.sws-status { background: #eef2f6; border-radius: 4px; font-size: 13px; font-weight: 400; margin-left: 10px; padding: 4px 10px; }
+.sws select[multiple] { min-width: 260px; max-width: 100%; }
+.sws-product { border-top: 1px solid #dcdcde; padding: 10px 0 20px; }
+.sws-product h3 small { font-weight: 400; color: #646970; }
+.sws-product select { max-width: 100%; }
+.sws-saved { color: #006b35; margin-left: 8px; }
+.sws-switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; border: 1px solid #2271b1; border-radius: 4px; padding: 10px 14px; background: #fff; color: #1d2327; font-size: 14px; }
+.sws-switch span { display: inline-block; width: 40px; height: 22px; background: #646970; border-radius: 20px; position: relative; }
+.sws-switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+.sws-switch.is-on span { background: #2271b1; }
+.sws-switch.is-on span::after { left: 21px; }
+.sws-switch:focus-visible { outline: 2px solid #2271b1; outline-offset: 3px; }
+.sws-switch:disabled { opacity: .5; cursor: default; }
+#sws-progress:not(:empty) { margin-top: 16px; font-weight: 600; }
