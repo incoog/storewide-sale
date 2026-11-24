@@ -48,6 +48,19 @@ $p=wc_get_product($e); $p->set_date_on_sale_from('2030-01-01'); $p->set_date_on_
 $new=product('New product',1000,'','2025-01-01');
 $cat=wp_insert_term('Excluded','product_cat'); $child=wp_insert_term('Child','product_cat',array('parent'=>$cat['term_id']));
 $excluded=product('Excluded category',1000); wp_set_object_terms($excluded,array($child['term_id']),'product_cat');
+$tag=wp_insert_term('Nyheter','product_tag'); $tag2=wp_insert_term('Limited','product_tag'); $other_tag=wp_insert_term('Other','product_tag');
+$same_name_cat=wp_insert_term('Nyheter','product_cat');
+$tagged=product('Tagged new product',1000,850); wp_set_object_terms($tagged,array($tag['term_id'],$other_tag['term_id']),'product_tag');
+$tagged2=product('Second selected tag',1000); wp_set_object_terms($tagged2,array($tag2['term_id']),'product_tag');
+$other_tagged=product('Other tag product',1000); wp_set_object_terms($other_tagged,array($other_tag['term_id']),'product_tag');
+$tag_parent=new WC_Product_Variable(); $tag_parent->set_name('Tagged family'); $tag_parent->set_status('publish'); $tag_parent->set_date_created('2020-01-01'); $tag_parent->save();
+wp_set_object_terms($tag_parent->get_id(),array($tag['term_id']),'product_tag');
+$tag_children=array();
+foreach(array(700,900) as $regular) { $tv=new WC_Product_Variation(); $tv->set_parent_id($tag_parent->get_id()); $tv->set_status('publish'); $tv->set_regular_price($regular); $tv->save(); $tag_children[]=$tv->get_id(); }
+foreach(array('not-an-array',array($same_name_cat['term_id']),array(0),array(array(1)),array(999999999)) as $invalid) {
+    try { $engine->save_settings(array('percent'=>20,'tags'=>$invalid)); ok(false,'invalid tag exclusion rejected'); } catch(RuntimeException $error) { ok(true,'invalid tag exclusion rejected'); }
+}
+
 $variable=new WC_Product_Variable(); $variable->set_name('Variable'); $variable->set_status('publish'); $variable->set_date_created('2020-01-01'); $variable->save();
 $v=new WC_Product_Variation(); $v->set_parent_id($variable->get_id()); $v->set_status('publish'); $v->set_regular_price(2000); $v->set_date_created('2025-01-01'); $v->save(); $variation=$v->get_id();
 $private=product('Private product',1000);$p=wc_get_product($private);$p->set_status('private');$p->save();
@@ -71,15 +84,16 @@ ok(SWS_Engine::soft79_status()==='inactive_fork','detects installed inactive for
 unlink($detect.'/soft79.php'); rmdir($detect); wp_clean_plugins_cache();
 try { $engine->start(array('percent'=>0)); ok(false,'invalid percent rejected'); } catch(RuntimeException $error) { ok(true,'invalid percent rejected'); }
 // Saving a setup must never enroll products, change prices or start background work.
-$settings=array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id']),'products'=>array($single,$parent2->get_id(),$excluded_variation));
+$settings=array('percent'=>20,'cutoff'=>'2024-12-31','categories'=>array($cat['term_id']),'tags'=>array($tag['term_id'],$tag2['term_id'],$tag['term_id']),'products'=>array($single,$parent2->get_id(),$excluded_variation));
 $before_save=SWS_Engine::snapshot(wc_get_product($a)); $scheduled=wp_next_scheduled(SWS_Engine::JOB);
 $engine->save_settings($settings); $saved=SWS_Store::campaign();
 ok($saved['phase']==='stopped' && empty($saved['id']),'saving settings does not create a campaign');
+ok($saved['tags']===array($tag['term_id'],$tag2['term_id']),'saves and deduplicates product-tag exclusions');
 ok($saved['percent']===20.0 && $saved['cutoff']==='2024-12-31' && $saved['categories']===array($cat['term_id']) && $saved['products']===$settings['products'],'saves percentage date category and product choices');
 ok(wp_next_scheduled(SWS_Engine::JOB)===$scheduled && SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($a)),$before_save) && (int)$wpdb->get_var('SELECT COUNT(*) FROM '.SWS_Store::table())===0,'saving leaves product prices journal and scheduled work unchanged');
 try { $engine->save_settings(array('percent'=>0)); ok(false,'invalid saved settings rejected'); } catch(RuntimeException $error) { ok(SWS_Store::campaign()===$saved,'invalid saved settings do not overwrite previous choices'); }
 $engine->save_settings(array('percent'=>15));
-ok(SWS_Store::campaign()['categories']===array() && SWS_Store::campaign()['products']===array() && SWS_Store::campaign()['cutoff']==='','saved exclusions and date can be cleared');
+ok(SWS_Store::campaign()['categories']===array() && SWS_Store::campaign()['tags']===array() && SWS_Store::campaign()['products']===array() && SWS_Store::campaign()['cutoff']==='','saved exclusions and date can be cleared');
 $engine->start($settings);
 run_phase($engine,'active');
 $active=SWS_Store::campaign();
@@ -89,6 +103,11 @@ ok(sale($b)===400.0,'product without original sale discounted');
 ok(sale($c)===100.0 && row($c)===null,'better existing sale untouched');
 ok(row($new)===null,'date exclusion');
 ok(row($excluded)===null,'descendant category excluded');
+ok(row($tagged)===null && sale($tagged)===850.0,'selected tag preserves existing sale on excluded product');
+ok(row($tagged2)===null && wc_get_product($tagged2)->get_sale_price('edit')==='','matching any selected tag excludes product');
+ok(row($tag_children[0])===null && row($tag_children[1])===null,'tagged parent excludes every variation');
+ok(sale($other_tagged)===800.0 && row($other_tagged)!==null,'other tags do not exclude an otherwise eligible product');
+
 ok(sale($variation)===1600.0,'variation inherits parent eligibility');
 ok(row($private)===null && wc_get_product($private)->get_sale_price('edit')==='','private product not repriced');
 ok(row($draft)===null && row($external_id)===null,'draft and external products not repriced');
@@ -137,7 +156,9 @@ ok($saved['soft79']===true,'SOFT79 preference can be saved without activation');
 $engine->save_settings(array('percent'=>17));
 ok(SWS_Store::campaign()['soft79']===false,'SOFT79 preference can be unchecked and saved');
 // New campaign verifies preserved amount, manual override of a conflict and interrupted writes.
-$engine->start(array('percent'=>25)); run_phase($engine,'active');
+$engine->start(array('percent'=>25));
+$legacy=SWS_Store::campaign(); unset($legacy['tags']); SWS_Store::state($legacy); run_phase($engine,'active');
+ok(row($tagged)!==null && sale($tagged)===750.0 && row($tag_children[0])!==null,'legacy campaigns without tag settings keep their original behavior');
 $p=wc_get_product($a); $p->set_regular_price(1400); $p->save(); $s=SWS_Store::campaign(); $engine->decide($a,'amount',row($a)['regular'],$s['id']);
 $original=row($a)['original']['sale'];
 $p=wc_get_product($e); $p->set_regular_price(1200); $p->save(); ok(row($e)['conflict'],'new scheduled-sale conflict');
@@ -185,8 +206,9 @@ wp_delete_post($gone,true);ok(row($gone)['status']==='done' && !row($gone)['conf
 $engine->stop();run_phase($engine,'stopped');
 $admin=null; foreach($GLOBALS['wp_filter']['admin_menu']->callbacks[10] as $hook) { if(is_array($hook['function']) && $hook['function'][0] instanceof SWS_Admin) $admin=$hook['function'][0]; }
 ob_start();$admin->render();$html=ob_get_clean();
-ok(strpos($html,'role="switch"')!==false && strpos($html,'categories[]')!==false && strpos($html,'products[]')!==false,'settings page renders switch and both selectors');
+ok(strpos($html,'role="switch"')!==false && strpos($html,'categories[]')!==false && strpos($html,'products[]')!==false && strpos($html,'tags[]')!==false,'settings page renders switch and all three selectors');
 ok(strpos($html,'sws-layout')!==false && strpos($html,'sws-sidebar')!==false,'settings page has structured overview layout');
+$found=$admin->search_results('tags','Nyhet');ok(in_array($tag['term_id'],array_column($found,'id'),true) && !in_array($same_name_cat['term_id'],array_column($found,'id'),true),'product-tag search finds tags without mixing in categories');
 $found=$admin->search_results('categories','Child');ok(in_array($child['term_id'],array_column($found,'id'),true),'category search finds descendants');
 ok(SWS_Admin::category_label(get_term($child['term_id'],'product_cat'))==='Excluded / Child','category labels include parent path');
 $found=$admin->search_results('products','EXCLUDE-SINGLE');ok(in_array($single,array_column($found,'id'),true),'product search supports SKU');
@@ -206,7 +228,7 @@ SWS_Store::unlock($lease);
 // Validate the access guard without allowing wp_die to exit the test process.
 $die_filter=function(){ return function($message){ throw new RuntimeException('denied'); }; };
 add_filter('wp_die_handler',$die_filter,PHP_INT_MAX);
-wp_set_current_user(0); ok($admin->search_results('products','Excluded')===array(),'product search denies anonymous requests'); $access=new ReflectionMethod($admin,'access'); $access->setAccessible(true);
+wp_set_current_user(0); ok($admin->search_results('tags','Nyhet')===array(),'tag search denies anonymous requests'); ok($admin->search_results('products','Excluded')===array(),'product search denies anonymous requests'); $access=new ReflectionMethod($admin,'access'); $access->setAccessible(true);
 try { $access->invoke($admin); ok(false,'anonymous admin request rejected'); } catch(RuntimeException $error) { ok($error->getMessage()==='denied','anonymous admin request rejected'); }
 wp_set_current_user(1);remove_filter('wp_die_handler',$die_filter,PHP_INT_MAX);
 restore_error_handler();

@@ -27,7 +27,9 @@ test('save settings without activation, searchable chips and full start/stop flo
     await login(page);
     await expect(page.locator('#sws-categories + .select2')).toBeVisible();
     await expect(page.locator('#sws-products + .select2')).toBeVisible();
+    await expect(page.locator('#sws-tags + .select2')).toBeVisible();
     await select(page, 'categories', 'UI Porc', 'UI Porcelain');
+    await select(page, 'tags', 'UI Nyh', 'UI Nyheter');
     await select(page, 'products', 'UI-VASE-1', /UI Vas/);
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
     await expect(page.locator('#sws-products + .select2 .select2-selection__choice')).toContainText('UI Vas');
@@ -36,6 +38,7 @@ test('save settings without activation, searchable chips and full start/stop flo
     await expect(page.locator('#sws-summary-percent')).toHaveText('15');
     await expect(page.locator('#sws-summary-categories')).toHaveText('1');
     await expect(page.locator('#sws-summary-products')).toHaveText('1');
+    await expect(page.locator('#sws-summary-tags')).toHaveText('1');
     const soft79 = page.getByRole('checkbox', { name: 'Undanta kampanjprodukter från SOFT79' });
     await soft79.check();
     await page.getByRole('button', { name: 'Spara inställningar', exact: true }).click();
@@ -47,13 +50,19 @@ test('save settings without activation, searchable chips and full start/stop flo
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
     await expect(page.locator('#sws-products + .select2 .select2-selection__choice')).toContainText('UI Vas');
     await expect(soft79).toBeChecked();
+    await expect(page.locator('#sws-tags + .select2 .select2-selection__choice')).toContainText('UI Nyheter');
     await expect(page.getByRole('switch', { name: 'Aktivera kampanj' })).toBeVisible();
     // Unchecking an option must also persist, and activation still accepts unsaved edits.
+    await page.locator('#sws-tags + .select2 .select2-selection__choice__remove').click();
+    await page.locator('#sws-tags + .select2 .select2-search__field').press('Escape');
+    await expect(page.locator('#sws-summary-tags')).toHaveText('0');
     await soft79.uncheck();
     await page.getByRole('button', { name: 'Spara inställningar', exact: true }).click();
     await expect(page.locator('.notice-success')).toBeVisible();
     await page.reload();
     await expect(soft79).not.toBeChecked();
+    await expect(page.locator('#sws-tags + .select2 .select2-selection__choice')).toHaveCount(0);
+    await select(page, 'tags', 'UI Nyh', 'UI Nyheter');
     await soft79.check();
     const left = await page.locator('.sws-main').boundingBox();
     const right = await page.locator('.sws-sidebar').boundingBox();
@@ -67,13 +76,16 @@ test('save settings without activation, searchable chips and full start/stop flo
     await page.getByRole('switch', { name: 'Aktivera kampanj' }).click();
     await expect(page.locator('.sws-status-active')).toBeVisible({ timeout: 45000 });
     await page.waitForLoadState('load', { timeout: 30000 });
-    await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Vas']);
+    await expect(page.locator('.sws-chips')).toContainText(['UI Porcelain', 'UI Nyheter', 'UI Vas']);
     await expect(soft79).toBeChecked();
     await expect(page.getByRole('button', { name: 'Spara inställningar', exact: true })).toHaveCount(0);
+    await expect(page.locator('#sws-tags')).toHaveCount(0);
+    await expect(page.locator('#sws-summary-tags')).toHaveText('1');
     console.log('Active page animation frame:', await page.evaluate(() => Promise.race([new Promise(resolve => requestAnimationFrame(() => resolve({ frame: true }))), new Promise(resolve => setTimeout(() => resolve({ frame: false, visibility: document.visibilityState, ready: document.readyState, raf: String(requestAnimationFrame), animations: document.getAnimations().length }), 1500))])));
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });
     await expect(page.locator('.sws-status-stopped')).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
+    await expect(page.locator('#sws-tags + .select2 .select2-selection__choice')).toContainText('UI Nyheter');
     await page.screenshot({ path: path.join('test-results/screenshots', 'settings-desktop.png'), fullPage: true, timeout: 15000 });
 });
 

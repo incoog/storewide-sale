@@ -53,6 +53,14 @@ final class SWS_Engine {
                 $categories[] = (int) $id;
             }
         }
+        $tags = array();
+        if ( ! empty( $input['tags'] ) ) {
+            if ( ! is_array( $input['tags'] ) ) { throw new RuntimeException( 'Etikettlistan är ogiltig.' ); }
+            foreach ( $input['tags'] as $id ) {
+                if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) || ! term_exists( (int) $id, 'product_tag' ) ) { throw new RuntimeException( 'En vald produktetikett finns inte.' ); }
+                $tags[] = (int) $id;
+            }
+        }
         $products = array();
         if ( ! empty( $input['products'] ) ) {
             if ( ! is_array( $input['products'] ) ) { throw new RuntimeException( 'Produktlistan är ogiltig.' ); }
@@ -72,6 +80,7 @@ final class SWS_Engine {
         return array(
             'percent' => (float) $percent, 'cutoff' => $cutoff,
             'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ),
+            'tags' => array_values( array_unique( $tags ) ),
             'products' => array_values( array_unique( $products ) ),
             'soft79' => ! empty( $input['soft79'] ) && 'fork' === self::soft79_status(),
         );
@@ -143,6 +152,12 @@ final class SWS_Engine {
         $terms = wp_get_object_terms( $parent->get_id(), 'product_cat', array( 'fields' => 'ids' ) );
         if ( is_wp_error( $terms ) ) { throw new RuntimeException( 'Kunde inte läsa produktens kategorier.' ); }
         if ( array_intersect( array_map( 'intval', $terms ), $state['excluded'] ) ) { return false; }
+        // Variations use their parent's product tags, just as they use its categories.
+        if ( ! empty( $state['tags'] ) ) {
+            $tags = wp_get_object_terms( $parent->get_id(), 'product_tag', array( 'fields' => 'ids' ) );
+            if ( is_wp_error( $tags ) ) { throw new RuntimeException( 'Kunde inte läsa produktens etiketter.' ); }
+            if ( array_intersect( array_map( 'intval', $tags ), $state['tags'] ) ) { return false; }
+        }
         $target = self::price( $product->get_regular_price( 'edit' ), $state['percent'] );
         if ( '' === $target ) { return false; }
         // A storewide sale must not increase an already lower active sale price.

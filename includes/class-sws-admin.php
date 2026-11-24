@@ -90,10 +90,11 @@ final class SWS_Admin {
     public function search_results( $kind, $term ) {
         if ( ! current_user_can( 'manage_woocommerce' ) || strlen( $term ) < 1 || strlen( $term ) > 200 ) { return array(); }
         $results = array();
-        if ( 'categories' === $kind ) {
-            $terms = get_terms( array( 'taxonomy' => 'product_cat', 'hide_empty' => false, 'search' => $term, 'number' => 30, 'orderby' => 'name' ) );
+        if ( in_array( $kind, array( 'categories', 'tags' ), true ) ) {
+            $taxonomy = 'tags' === $kind ? 'product_tag' : 'product_cat';
+            $terms = get_terms( array( 'taxonomy' => $taxonomy, 'hide_empty' => false, 'search' => $term, 'number' => 30, 'orderby' => 'name' ) );
             if ( is_wp_error( $terms ) ) { return array(); }
-            foreach ( $terms as $term ) { $results[] = array( 'id' => (int) $term->term_id, 'text' => self::category_label( $term ) ); }
+            foreach ( $terms as $term ) { $results[] = array( 'id' => (int) $term->term_id, 'text' => 'tags' === $kind ? html_entity_decode( $term->name, ENT_QUOTES, 'UTF-8' ) : self::category_label( $term ) ); }
         } elseif ( 'products' === $kind && strlen( $term ) >= 2 ) {
             $published = function () { return array( 'publish' ); };
             add_filter( 'woocommerce_search_products_post_statuses', $published );
@@ -110,13 +111,14 @@ final class SWS_Admin {
         return $results;
     }
     private function selector( $kind, $state ) {
-        $label = 'categories' === $kind ? 'Sök kategorier att undanta…' : 'Sök produktnamn, artikelnummer eller ID…';
+        $labels = array( 'categories' => 'Sök kategorier att undanta…', 'tags' => 'Sök produktetiketter att undanta…', 'products' => 'Sök produktnamn, artikelnummer eller ID…' );
+        $label = $labels[ $kind ];
         echo '<select id="sws-' . esc_attr( $kind ) . '" name="' . esc_attr( $kind ) . '[]" class="sws-search" multiple data-kind="' . esc_attr( $kind ) . '" data-placeholder="' . esc_attr( $label ) . '" aria-describedby="sws-' . esc_attr( $kind ) . '-help" style="width:100%">';
         foreach ( isset( $state[ $kind ] ) ? $state[ $kind ] : array() as $id ) {
             $name = '#' . $id . ' (inte längre tillgänglig)';
-            if ( 'categories' === $kind ) {
-                $term = get_term( $id, 'product_cat' );
-                if ( $term && ! is_wp_error( $term ) ) { $name = self::category_label( $term ); }
+            if ( in_array( $kind, array( 'categories', 'tags' ), true ) ) {
+                $term = get_term( $id, 'tags' === $kind ? 'product_tag' : 'product_cat' );
+                if ( $term && ! is_wp_error( $term ) ) { $name = 'tags' === $kind ? html_entity_decode( $term->name, ENT_QUOTES, 'UTF-8' ) : self::category_label( $term ); }
             } else {
                 $product = wc_get_product( $id );
                 if ( $product ) { $name = wp_strip_all_tags( $product->get_formatted_name() ); }
@@ -151,17 +153,18 @@ final class SWS_Admin {
     }
     private function scope_summary( $state ) {
         $category_count = isset( $state['categories'] ) ? count( $state['categories'] ) : 0;
+        $tag_count = isset( $state['tags'] ) ? count( $state['tags'] ) : 0;
         $product_count = isset( $state['products'] ) ? count( $state['products'] ) : 0;
-        echo '<dl class="sws-summary"><div><dt>Rabatt</dt><dd><span id="sws-summary-percent">' . esc_html( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '</span> %</dd></div><div><dt>Datumgräns</dt><dd id="sws-summary-date">' . esc_html( ! empty( $state['cutoff'] ) ? $state['cutoff'] : 'Ingen gräns' ) . '</dd></div><div><dt>Undantagna kategorier</dt><dd id="sws-summary-categories">' . esc_html( $category_count ) . '</dd></div><div><dt>Undantagna produkter</dt><dd id="sws-summary-products">' . esc_html( $product_count ) . '</dd></div></dl>';
+        echo '<dl class="sws-summary"><div><dt>Rabatt</dt><dd><span id="sws-summary-percent">' . esc_html( isset( $state['percent'] ) ? $state['percent'] : 20 ) . '</span> %</dd></div><div><dt>Datumgräns</dt><dd id="sws-summary-date">' . esc_html( ! empty( $state['cutoff'] ) ? $state['cutoff'] : 'Ingen gräns' ) . '</dd></div><div><dt>Undantagna kategorier</dt><dd id="sws-summary-categories">' . esc_html( $category_count ) . '</dd></div><div><dt>Undantagna produktetiketter</dt><dd id="sws-summary-tags">' . esc_html( $tag_count ) . '</dd></div><div><dt>Undantagna produkter</dt><dd id="sws-summary-products">' . esc_html( $product_count ) . '</dd></div></dl>';
     }
     private function locked_rules( $state ) {
         echo '<section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-filter" aria-hidden="true"></span><h2>Kampanjens urval</h2></div><p>Rabatt och undantag är låsta tills kampanjen har avslutats.</p>';
-        foreach ( array( 'categories' => 'Undantagna kategorier', 'products' => 'Undantagna produkter' ) as $kind => $label ) {
+        foreach ( array( 'categories' => 'Undantagna kategorier', 'tags' => 'Undantagna produktetiketter', 'products' => 'Undantagna produkter' ) as $kind => $label ) {
             echo '<h3 class="sws-field-label">' . esc_html( $label ) . '</h3><div class="sws-chips">';
             if ( empty( $state[ $kind ] ) ) { echo '<span class="sws-muted">Inga undantag</span>'; }
             foreach ( isset( $state[ $kind ] ) ? $state[ $kind ] : array() as $id ) {
                 $name = '#' . $id;
-                if ( 'categories' === $kind ) { $term = get_term( $id, 'product_cat' ); if ( $term && ! is_wp_error( $term ) ) { $name = self::category_label( $term ); } }
+                if ( in_array( $kind, array( 'categories', 'tags' ), true ) ) { $term = get_term( $id, 'tags' === $kind ? 'product_tag' : 'product_cat' ); if ( $term && ! is_wp_error( $term ) ) { $name = 'tags' === $kind ? html_entity_decode( $term->name, ENT_QUOTES, 'UTF-8' ) : self::category_label( $term ); } }
                 else { $product = wc_get_product( $id ); if ( $product ) { $name = $product->get_name(); } }
                 echo '<span class="sws-chip">' . esc_html( $name ) . '</span>';
             }
@@ -190,7 +193,9 @@ final class SWS_Admin {
             echo '<section class="sws-card"><div class="sws-section-heading"><span class="dashicons dashicons-filter" aria-hidden="true"></span><h2>Undantag</h2><span class="sws-optional">Valfritt</span></div><p>Välj vilka delar av sortimentet som ska lämnas utanför kampanjen.</p><div class="sws-field"><label for="sws-cutoff" class="sws-field-label">Produkter skapade efter</label><input id="sws-cutoff" name="cutoff" type="date" value="' . esc_attr( isset( $state['cutoff'] ) ? $state['cutoff'] : '' ) . '" aria-describedby="sws-cutoff-help"><p id="sws-cutoff-help" class="description">Det valda datumet ingår. Lämna tomt för ingen datumgräns.</p></div>';
             echo '<div class="sws-field"><label for="sws-categories" class="sws-field-label">Undanta kategorier</label>';
             $this->selector( 'categories', $state );
-            echo '<p id="sws-categories-help" class="description">Sök och välj en eller flera kategorier. Underkategorier ingår.</p></div><div class="sws-field"><label for="sws-products" class="sws-field-label">Undanta produkter</label>';
+            echo '<p id="sws-categories-help" class="description">Sök och välj en eller flera kategorier. Underkategorier ingår.</p></div><div class="sws-field"><label for="sws-tags" class="sws-field-label">Undanta produktetiketter</label>';
+            $this->selector( 'tags', $state );
+            echo '<p id="sws-tags-help" class="description">Produkter med någon av de valda etiketterna undantas. Gäller även alla variationer av en märkt huvudprodukt.</p></div><div class="sws-field"><label for="sws-products" class="sws-field-label">Undanta produkter</label>';
             $this->selector( 'products', $state );
             echo '<p id="sws-products-help" class="description">Välj enskilda produkter eller variationer. En huvudprodukt undantar alla sina variationer.</p></div></section>';
             $this->soft79( $state, false );

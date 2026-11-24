@@ -23,7 +23,7 @@
         const update = () => {
             $('#sws-summary-percent').text($('#sws-percent').val() || '0');
             $('#sws-summary-date').text($('#sws-cutoff').val() || 'Ingen gräns');
-            for (const kind of ['categories', 'products']) $('#sws-summary-' + kind).text(($('#sws-' + kind).val() || []).length);
+            for (const kind of ['categories', 'tags', 'products']) $('#sws-summary-' + kind).text(($('#sws-' + kind).val() || []).length);
         };
         $page.find('#sws-percent, #sws-cutoff, .sws-search').on('input change', update);
         if ($page.find('#sws-percent').length) update();

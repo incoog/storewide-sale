@@ -1,6 +1,7 @@
 <?php
 if ( PHP_SAPI !== 'cli' || getenv( 'SWS_TEST_RUN' ) !== '1' || ! defined( 'ABSPATH' ) || get_option( 'sws_test_environment' ) !== 'disposable' ) { exit( 1 ); }
 $category = wp_insert_term( 'UI Porcelain', 'product_cat' );
+wp_insert_term( 'UI Nyheter', 'product_tag' );
 $product = new WC_Product_Simple();
 $product->set_name( 'UI Vas' ); $product->set_sku( 'UI-VASE-1' ); $product->set_regular_price( 1000 ); $product->set_status( 'publish' ); $product->set_date_created( '2020-01-01' ); $product->save();
 $fake = WP_PLUGIN_DIR . '/sws-ui-soft79';
