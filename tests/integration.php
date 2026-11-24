@@ -220,6 +220,74 @@ $p=wc_get_product($dated);$p->set_date_on_sale_from('2030-01-01');$p->set_date_o
 $empty_schedule=SWS_Engine::snapshot(wc_get_product($dated));
 $engine->start(array('percent'=>20));run_phase($engine,'active');$engine->stop();run_phase($engine,'stopped');
 ok(SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($dated)),$empty_schedule),'empty original sale restores original date metadata');
+// Stock eligibility and live transitions use real WooCommerce status/quantity saves.
+$stock_item=function($name,$quantity,$sale='',$backorders='no') {
+    $id=product($name,1000,$sale); $p=wc_get_product($id); $p->set_manage_stock(true); $p->set_backorders($backorders); $p->set_stock_quantity($quantity); $p->save(); return $id;
+};
+$stock_live=$stock_item('Stock live original sale',2,900);
+$stock_sold=$stock_item('Stock already sold',0);
+$stock_backorder=$stock_item('Stock on backorder',0,'','yes');
+$stock_manual=$stock_item('Stock manual choice',2);
+$stock_scheduled=$stock_item('Stock scheduled original sale',2,850);
+$p=wc_get_product($stock_scheduled); $p->set_date_on_sale_from('2030-01-01'); $p->set_date_on_sale_to('2030-01-20'); $p->save(); $stock_dates=SWS_Engine::snapshot($p);
+$stock_parent=new WC_Product_Variable(); $stock_parent->set_name('Stock independent variations'); $stock_parent->set_status('publish'); $stock_parent->save();
+$stock_variations=array();
+foreach(array('instock','outofstock') as $status) { $sv=new WC_Product_Variation(); $sv->set_parent_id($stock_parent->get_id()); $sv->set_status('publish'); $sv->set_regular_price(1000); $sv->set_stock_status($status); $sv->save(); $stock_variations[]=$sv->get_id(); }
+WC_Product_Variable::sync($stock_parent->get_id());
+$shared=new WC_Product_Variable(); $shared->set_name('Stock shared parent'); $shared->set_status('publish'); $shared->set_manage_stock(true); $shared->set_stock_quantity(2); $shared->save();
+$sv=new WC_Product_Variation(); $sv->set_parent_id($shared->get_id()); $sv->set_status('publish'); $sv->set_regular_price(1000); $sv->save(); $shared_variation=$sv->get_id();
+$engine->save_settings(array('percent'=>20,'exclude_out_of_stock'=>1));
+ok(SWS_Store::campaign()['exclude_out_of_stock']===true && !SWS_Engine::running(SWS_Store::campaign()),'stock exclusion saves without activating a campaign');
+$engine->start(array('percent'=>20,'exclude_out_of_stock'=>1,'soft79'=>1)); run_phase($engine,'active');
+ok(row($stock_sold)===null && wc_get_product($stock_sold)->get_sale_price('edit')==='','already out-of-stock products receive no campaign sale');
+ok(sale($stock_backorder)===800.0,'backorders remain eligible');
+ok(sale($stock_variations[0])===800.0 && row($stock_variations[1])===null,'variation stock status excludes only sold-out variations');
+ok(sale($shared_variation)===800.0,'variation with shared available parent stock is eligible');
+wc_update_product_stock($stock_live,0);
+ok(wc_get_product($stock_live)->get_stock_status()==='outofstock' && row($stock_live)['status']==='stock' && wc_get_product($stock_live)->get_sale_price('edit')==='','order-style stock reduction pauses and clears the campaign sale');
+ok(row($stock_live)['original']['sale']==='900' && row($stock_live)['original_regular']==='1000','stock pause preserves the original sale journal');
+ok(apply_filters('soft79_wcpr_product_pricing_enabled',true,wc_get_product($stock_live))===false,'SOFT79 protection remains while a campaign price is paused');
+$p=wc_get_product($stock_live); $p->set_regular_price(1200); $p->save();
+ok(row($stock_live)['status']==='stock' && row($stock_live)['conflict'] && wc_get_product($stock_live)->get_sale_price('edit')==='','regular changes while sold out retain restoration decisions without adding a sale');
+$review_ids=array_column(SWS_Store::rows(SWS_Store::campaign(),'review',1000),'product_id');
+ok(in_array($stock_live,array_map('intval',$review_ids),true),'paused stock conflicts remain visible in the decision list');
+$s=SWS_Store::campaign(); $engine->decide($stock_live,'percent',row($stock_live)['regular'],$s['id']);
+wc_update_product_stock($stock_live,3);
+ok(row($stock_live)['status']==='managed' && sale($stock_live)===960.0 && row($stock_live)['choice']==='percent','restocking resumes the campaign against the latest regular price and retains the saved choice');
+// A busy lease must not prevent saving stock, and must leave a durable retry.
+$stock_lease=SWS_Store::lock(); wc_update_product_stock($stock_live,0);
+ok(wp_next_scheduled(SWS_Engine::STOCK_JOB,array($stock_live,0))!==false,'busy stock handling schedules a persistent retry');
+SWS_Store::unlock($stock_lease); $engine->stock_background($stock_live);
+ok(row($stock_live)['status']==='stock' && wc_get_product($stock_live)->get_sale_price('edit')==='','scheduled stock retry finishes without losing restoration choices');
+wc_update_product_stock($shared->get_id(),0);
+ok(row($shared_variation)['status']==='stock' && wc_get_product($shared_variation)->get_sale_price('edit')==='','shared parent stock pauses campaign prices on its variations');
+wc_update_product_stock($shared->get_id(),2);
+ok(row($shared_variation)['status']==='managed' && sale($shared_variation)===800.0,'restocking shared parent stock resumes variation campaign prices');
+$p=wc_get_product($stock_variations[0]); $p->set_stock_status('outofstock'); $p->save();
+ok(row($stock_variations[0])['status']==='stock' && wc_get_product($stock_variations[0])->get_sale_price('edit')==='','a variation selling out pauses its own campaign price');
+$p=wc_get_product($stock_variations[0]); $p->set_stock_status('instock'); $p->save();
+ok(row($stock_variations[0])['status']==='managed' && sale($stock_variations[0])===800.0,'restocking an individual variation resumes its campaign price');
+$p=wc_get_product($stock_manual); $p->set_sale_price(750); $p->save(); wc_update_product_stock($stock_manual,0);
+ok(row($stock_manual)['status']==='manual' && sale($stock_manual)===750.0,'selling out respects a manually chosen sale price');
+wc_update_product_stock($stock_manual,2);
+ok(sale($stock_manual)===750.0 && row($stock_manual)['status']==='manual','restocking does not overwrite a manual sale');
+wc_update_product_stock($stock_sold,2);
+ok(row($stock_sold)===null && wc_get_product($stock_sold)->get_sale_price('edit')==='','products excluded at activation are not automatically enrolled on restock');
+wc_update_product_stock($stock_scheduled,0);
+ok(row($stock_scheduled)['status']==='stock' && row($stock_scheduled)['original']===$stock_dates,'stock pause preserves the original sale schedule');
+$engine->stop(); run_phase($engine,'stopped');
+ok(sale($stock_live)===1080.0 && wc_get_product($stock_live)->get_regular_price('edit')==='1200','ending a sold-out campaign product honors its selected restoration and current regular price');
+ok(SWS_Engine::same(SWS_Engine::snapshot(wc_get_product($stock_scheduled)),$stock_dates),'ending restores the original schedule even while a product is sold out');
+ok(sale($stock_manual)===750.0,'manual sale survives stock transitions and campaign completion');
+// Opting out and older campaigns retain the previous inclusion behavior.
+wc_update_product_stock($stock_sold,0);
+$engine->start(array('percent'=>20,'exclude_out_of_stock'=>0)); run_phase($engine,'active');
+ok(row($stock_sold)!==null && sale($stock_sold)===800.0,'unchecked stock exclusion permits already sold-out products');
+wc_update_product_stock($stock_backorder,2); wc_update_product_stock($stock_backorder,0);
+ok(row($stock_backorder)['status']==='managed' && sale($stock_backorder)===800.0,'unchecked stock option does not pause campaign prices');
+$legacy=SWS_Store::campaign(); unset($legacy['exclude_out_of_stock']); SWS_Store::state($legacy); $engine->stock_background($stock_sold);
+ok(row($stock_sold)['status']==='managed','campaigns from before the stock option keep their existing behavior');
+$engine->stop(); run_phase($engine,'stopped');
 // Concurrent commands must fail instead of overwriting one another.
 $lease=SWS_Store::lock();
 try { $engine->start(array('percent'=>20)); ok(false,'concurrent command rejected'); } catch(RuntimeException $error) { ok(true,'concurrent command rejected'); }

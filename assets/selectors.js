@@ -23,9 +23,10 @@
         const update = () => {
             $('#sws-summary-percent').text($('#sws-percent').val() || '0');
             $('#sws-summary-date').text($('#sws-cutoff').val() || 'Ingen gräns');
+            $('#sws-summary-stock').text($('#sws-exclude-stock').prop('checked') ? 'Undantas' : 'Kan ingå');
             for (const kind of ['categories', 'tags', 'products']) $('#sws-summary-' + kind).text(($('#sws-' + kind).val() || []).length);
         };
-        $page.find('#sws-percent, #sws-cutoff, .sws-search').on('input change', update);
+        $page.find('#sws-percent, #sws-cutoff, #sws-exclude-stock, .sws-search').on('input change', update);
         if ($page.find('#sws-percent').length) update();
     });
 })(jQuery);

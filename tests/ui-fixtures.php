@@ -1,5 +1,6 @@
 <?php
 if ( PHP_SAPI !== 'cli' || getenv( 'SWS_TEST_RUN' ) !== '1' || ! defined( 'ABSPATH' ) || get_option( 'sws_test_environment' ) !== 'disposable' ) { exit( 1 ); }
+$state = SWS_Store::campaign(); unset( $state['exclude_out_of_stock'] ); SWS_Store::state( $state );
 $category = wp_insert_term( 'UI Porcelain', 'product_cat' );
 wp_insert_term( 'UI Nyheter', 'product_tag' );
 $product = new WC_Product_Simple();

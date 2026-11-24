@@ -71,7 +71,7 @@ final class SWS_Store {
         global $wpdb;
         $conditions = array(
             'open' => "status <> 'done'", 'conflicts' => 'needs_choice=1',
-            'review' => "status='managed' AND is_conflict=1", 'manual' => "status='manual'",
+            'review' => "status IN ('managed','stock') AND is_conflict=1", 'manual' => "status='manual'",
             'pending' => "status IN ('pending','restoring')",
         );
         $where = isset( $conditions[ $kind ] ) ? $conditions[ $kind ] : $conditions['open'];

@@ -12,7 +12,7 @@ test('category, tag and product selectors use scoped, nonce-protected WooCommerc
     }));
     const values = { '#sws-percent': '20', '#sws-cutoff': '', '#sws-categories': ['2'], '#sws-tags': ['3'], '#sws-products': ['4', '5'] };
     const texts = {};
-    const outputs = selector => ({ length: 1, val: () => values[selector], text: value => { texts[selector] = value; } });
+    const outputs = selector => ({ length: 1, val: () => values[selector], prop: () => true, text: value => { texts[selector] = value; } });
     const page = { length: 1, find: selector => selector === '.sws-search' ? { each: fn => fields.forEach(field => fn.call(field)) } : { length: 1, on: () => {} } };
     const $ = value => {
         if (typeof value === 'function') return value();
@@ -34,6 +34,7 @@ test('category, tag and product selectors use scoped, nonce-protected WooCommerc
         assert.equal(config.templateResult, undefined, 'keep SelectWoo default text escaping');
     }
     assert.equal(texts['#sws-summary-percent'], '20');
+    assert.equal(texts['#sws-summary-stock'], 'Undantas');
     assert.equal(texts['#sws-summary-categories'], 1);
     assert.equal(texts['#sws-summary-tags'], 1);
     assert.equal(texts['#sws-summary-products'], 2);

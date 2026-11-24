@@ -4,10 +4,16 @@ defined( 'ABSPATH' ) || exit;
 final class SWS_Engine {
     private $writing = false;
     private $pending = array();
+    private $stock_dirty = array();
     const JOB = 'sws_process_campaign';
+    const STOCK_JOB = 'sws_process_stock_change';
 
     public function register() {
         add_action( self::JOB, array( $this, 'background' ) );
+        add_action( self::STOCK_JOB, array( $this, 'stock_background' ), 10, 2 );
+        add_action( 'woocommerce_product_set_stock_status', array( $this, 'stock_changed' ) );
+        add_action( 'woocommerce_variation_set_stock_status', array( $this, 'stock_changed' ) );
+        add_action( 'woocommerce_after_product_object_save', array( $this, 'after_stock_save' ), 120 );
         add_action( 'woocommerce_before_product_object_save', array( $this, 'before_save' ), 99 );
         add_action( 'woocommerce_after_product_object_save', array( $this, 'after_save' ), 99 );
         add_filter( 'soft79_wcpr_product_pricing_enabled', array( $this, 'soft79_enabled' ), 20, 2 );
@@ -82,6 +88,7 @@ final class SWS_Engine {
             'categories' => array_values( array_unique( $categories ) ), 'excluded' => array_values( array_unique( $excluded ) ),
             'tags' => array_values( array_unique( $tags ) ),
             'products' => array_values( array_unique( $products ) ),
+            'exclude_out_of_stock' => ! empty( $input['exclude_out_of_stock'] ),
             'soft79' => ! empty( $input['soft79'] ) && 'fork' === self::soft79_status(),
         );
     }
@@ -133,6 +140,81 @@ final class SWS_Engine {
             SWS_Store::state( $state );
         } finally { SWS_Store::unlock( $token ); }
     }
+    private function out_of_stock( $product ) {
+        if ( 'outofstock' === $product->get_stock_status( 'edit' ) ) { return true; }
+        if ( $product->get_parent_id() ) {
+            $parent = wc_get_product( $product->get_parent_id() );
+            if ( $parent && 'outofstock' === $parent->get_stock_status( 'edit' ) ) { return true; }
+        }
+        return false;
+    }
+    private function schedule_stock( $id, $offset = 0, $delay = 1 ) {
+        $args = array( (int) $id, (int) $offset );
+        if ( ! wp_next_scheduled( self::STOCK_JOB, $args ) ) { wp_schedule_single_event( time() + $delay, self::STOCK_JOB, $args ); }
+    }
+    public function stock_changed( $id ) {
+        if ( $this->writing ) { return; }
+        $state = SWS_Store::campaign();
+        if ( empty( $state['exclude_out_of_stock'] ) || ! in_array( isset( $state['phase'] ) ? $state['phase'] : '', array( 'starting', 'active' ), true ) ) { return; }
+        $this->stock_dirty[ (int) $id ] = true;
+        // Persist a retry before the request ends, including when another save owns the lease.
+        $this->schedule_stock( $id );
+    }
+    public function after_stock_save( $product ) {
+        $id = $product->get_id();
+        if ( $this->writing || empty( $this->stock_dirty[ $id ] ) ) { return; }
+        unset( $this->stock_dirty[ $id ] );
+        $this->stock_background( $id );
+    }
+    public function stock_background( $id, $offset = 0 ) {
+        if ( $this->writing ) { return; }
+        $id = (int) $id; $offset = max( 0, (int) $offset );
+        wp_clear_scheduled_hook( self::STOCK_JOB, array( $id, $offset ) );
+        try { $token = SWS_Store::lock(); }
+        catch ( Throwable $error ) { $this->schedule_stock( $id, $offset, 10 ); return; }
+        try {
+            $state = SWS_Store::campaign();
+            if ( empty( $state['exclude_out_of_stock'] ) || ! in_array( isset( $state['phase'] ) ? $state['phase'] : '', array( 'starting', 'active' ), true ) ) { return; }
+            $product = wc_get_product( $id );
+            if ( ! $product ) { return; }
+            $ids = $product->is_type( 'variable' ) ? $product->get_children() : array( $id );
+            $started = microtime( true ); $processed = 0;
+            foreach ( array_slice( $ids, $offset, 20 ) as $product_id ) {
+                $current = wc_get_product( $product_id );
+                $row = SWS_Store::get( $state['id'], $product_id, true );
+                if ( $current && $row ) {
+                    if ( in_array( $row['status'], array( 'pending', 'restoring' ), true ) ) {
+                        $this->recover( $product_id, $row, $state );
+                        $row = SWS_Store::get( $state['id'], $product_id, true );
+                        $current = wc_get_product( $product_id );
+                    }
+                    if ( in_array( $row['status'], array( 'managed', 'stock' ), true ) ) { $this->stock_price( $current, $row, $state ); }
+                }
+                $processed++;
+                if ( microtime( true ) - $started > 5 ) { break; }
+            }
+            if ( $offset + $processed < count( $ids ) ) { $this->schedule_stock( $id, $offset + $processed ); }
+        } catch ( Throwable $error ) {
+            $latest = SWS_Store::campaign();
+            if ( self::running( $latest ) ) { $latest['error'] = $error->getMessage(); SWS_Store::state( $latest ); }
+            $this->schedule_stock( $id, $offset, 10 );
+        } finally { SWS_Store::unlock( $token ); }
+    }
+    private function stock_price( $product, $row, $state ) {
+        if ( ! self::same( self::snapshot( $product ), $row['applied'] ) ) {
+            SWS_Store::put( $state, $product->get_id(), $this->manual( $row, $product ) );
+            return;
+        }
+        $unavailable = $this->out_of_stock( $product );
+        if ( $unavailable && 'managed' === $row['status'] ) {
+            $row = $this->changed_regular( $row, (string) $product->get_regular_price( 'edit' ) );
+            // Keep the original sale and any required restoration decision in the journal.
+            $this->write( $product, $state, $row, array( 'sale' => '', 'from' => null, 'to' => null ), 'stock' );
+        } elseif ( ! $unavailable && 'stock' === $row['status'] && self::supported_product( $product ) ) {
+            $row = $this->changed_regular( $row, (string) $product->get_regular_price( 'edit' ) );
+            $this->write( $product, $state, $row, self::target( $row['regular'], $state['percent'] ), 'managed' );
+        }
+    }
     public static function supported_product( $product, $allow_parents = false ) {
         $types = $allow_parents ? array( 'simple', 'variation', 'variable' ) : array( 'simple', 'variation' );
         if ( ! ( $product instanceof WC_Product ) || ! $product->is_type( $types ) || 'publish' !== $product->get_status( 'edit' ) ) { return false; }
@@ -145,6 +227,7 @@ final class SWS_Engine {
     private function eligible( $product, $state ) {
         if ( ! self::supported_product( $product ) ) { return false; }
         $parent = $product->get_parent_id() ? wc_get_product( $product->get_parent_id() ) : $product;
+        if ( ! empty( $state['exclude_out_of_stock'] ) && $this->out_of_stock( $product ) ) { return false; }
         $excluded_products = isset( $state['products'] ) ? $state['products'] : array();
         if ( in_array( $product->get_id(), $excluded_products, true ) || in_array( $parent->get_id(), $excluded_products, true ) ) { return false; }
         $created = $parent->get_date_created( 'edit' );
@@ -256,7 +339,7 @@ final class SWS_Engine {
     private function restore( $id, $row, $state ) {
         $product = wc_get_product( $id );
         if ( ! $product ) { $row['status'] = 'done'; $row['conflict'] = false; SWS_Store::put( $state, $id, $row ); return true; }
-        if ( 'managed' === $row['status'] ) {
+        if ( in_array( $row['status'], array( 'managed', 'stock' ), true ) ) {
             if ( ! self::same( self::snapshot( $product ), $row['applied'] ) ) { $row = $this->manual( $row, $product ); }
             else { $row = $this->changed_regular( $row, (string) $product->get_regular_price( 'edit' ) ); }
         }
@@ -381,6 +464,8 @@ final class SWS_Engine {
                 $product->set_sale_price( $target['sale'] );
                 $product->set_date_on_sale_from( null );
                 $product->set_date_on_sale_to( null );
+            } elseif ( 'stock' === $row['status'] ) {
+                $row = $this->changed_regular( $row, $regular );
             }
             $row['regular'] = $regular;
             $after = $row['status'];
@@ -425,7 +510,7 @@ final class SWS_Engine {
             $row = SWS_Store::get( $state['id'], $id, true );
             $product = wc_get_product( $id );
             if ( ! $row || ! $product ) { throw new RuntimeException( 'Produkten kunde inte hittas.' ); }
-            if ( 'managed' === $row['status'] && ! empty( $row['conflict'] ) ) {
+            if ( in_array( $row['status'], array( 'managed', 'stock' ), true ) && ! empty( $row['conflict'] ) ) {
                 $current = (string) $product->get_regular_price( 'edit' );
                 if ( $current !== $regular || $row['regular'] !== $current ) { throw new RuntimeException( 'Ordinarie pris har ändrats igen. Ladda om sidan och välj på nytt.' ); }
                 if ( ! in_array( $choice, array( 'amount', 'percent', 'remove' ), true ) ) { throw new RuntimeException( 'Välj hur reapriset ska återställas.' ); }

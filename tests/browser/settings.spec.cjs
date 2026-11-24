@@ -28,6 +28,9 @@ test('save settings without activation, searchable chips and full start/stop flo
     await expect(page.locator('#sws-categories + .select2')).toBeVisible();
     await expect(page.locator('#sws-products + .select2')).toBeVisible();
     await expect(page.locator('#sws-tags + .select2')).toBeVisible();
+    const stock = page.getByRole('checkbox', { name: 'Undanta produkter som är slut i lager', exact: true });
+    await expect(stock).toBeChecked();
+    await expect(page.locator('#sws-summary-stock')).toHaveText('Undantas');
     await select(page, 'categories', 'UI Porc', 'UI Porcelain');
     await select(page, 'tags', 'UI Nyh', 'UI Nyheter');
     await select(page, 'products', 'UI-VASE-1', /UI Vas/);
@@ -47,6 +50,7 @@ test('save settings without activation, searchable chips and full start/stop flo
     await page.reload();
     await expect(page.locator('#sws-percent')).toHaveValue('15');
     await expect(page.locator('#sws-cutoff')).toHaveValue('2024-12-31');
+    await expect(stock).toBeChecked();
     await expect(page.locator('#sws-categories + .select2 .select2-selection__choice')).toContainText('UI Porcelain');
     await expect(page.locator('#sws-products + .select2 .select2-selection__choice')).toContainText('UI Vas');
     await expect(soft79).toBeChecked();
@@ -57,10 +61,14 @@ test('save settings without activation, searchable chips and full start/stop flo
     await page.locator('#sws-tags + .select2 .select2-search__field').press('Escape');
     await expect(page.locator('#sws-summary-tags')).toHaveText('0');
     await soft79.uncheck();
+    await stock.uncheck();
+    await expect(page.locator('#sws-summary-stock')).toHaveText('Kan ingå');
     await page.getByRole('button', { name: 'Spara inställningar', exact: true }).click();
     await expect(page.locator('.notice-success')).toBeVisible();
     await page.reload();
     await expect(soft79).not.toBeChecked();
+    await expect(stock).not.toBeChecked();
+    await stock.check();
     await expect(page.locator('#sws-tags + .select2 .select2-selection__choice')).toHaveCount(0);
     await select(page, 'tags', 'UI Nyh', 'UI Nyheter');
     await soft79.check();
@@ -80,6 +88,8 @@ test('save settings without activation, searchable chips and full start/stop flo
     await expect(soft79).toBeChecked();
     await expect(page.getByRole('button', { name: 'Spara inställningar', exact: true })).toHaveCount(0);
     await expect(page.locator('#sws-tags')).toHaveCount(0);
+    await expect(stock).toHaveCount(0);
+    await expect(page.locator('#sws-summary-stock')).toHaveText('Undantas');
     await expect(page.locator('#sws-summary-tags')).toHaveText('1');
     console.log('Active page animation frame:', await page.evaluate(() => Promise.race([new Promise(resolve => requestAnimationFrame(() => resolve({ frame: true }))), new Promise(resolve => setTimeout(() => resolve({ frame: false, visibility: document.visibilityState, ready: document.readyState, raf: String(requestAnimationFrame), animations: document.getAnimations().length }), 1500))])));
     await page.getByRole('switch', { name: 'Avsluta kampanj' }).click({ timeout: 15000 });

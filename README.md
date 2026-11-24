@@ -1,12 +1,12 @@
 # Storewide Sale for WooCommerce
 
-Apply one percentage discount to many products, exclude recent products, categories or product tags, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.2.2 is for staging evaluation.
+Apply one percentage discount to many products, exclude recent products, categories or product tags, and restore previous sale prices when the campaign ends. An independent plugin by incoog. Version 0.2.3 is for staging evaluation.
 
 ## Installation
 
 [Download the installable ZIP from Releases](https://github.com/incoog/storewide-sale/releases). The repository source archive also contains development tools; use the release asset for WordPress installation.
 
-Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.2.2.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
+Requires WordPress 6.5+, WooCommerce 8.0+ and PHP 7.4+. Upload `storewide-sale-0.2.3.zip` in **Plugins → Add New → Upload Plugin**, activate it, and open **WooCommerce → Storewide Sale**. The administration interface is currently in Swedish.
 
 There is no build step or runtime dependency on another discount plugin. The ZIP contains the plugin, this README and its licence. Test tooling is not included.
 
@@ -17,17 +17,22 @@ There is no build step or runtime dependency on another discount plugin. The ZIP
 | Percentage | A discount greater than 0 and up to 100%, calculated from the current regular price, rounded to the store's price decimals |
 | Created after | Exclude products created after the selected date, in the site's timezone; the selected day is included |
 | Categories | Search and select category chips; selected categories and their descendants are excluded |
+| Out of stock | The default-checked option excludes products with WooCommerce status `outofstock`; variation and parent stock statuses are checked. `onbackorder` remains eligible. Save the option before activation. |
 | Product tags | Search and select product tags; a product matching any selected tag is excluded, including all variations of a tagged parent |
 | Variations | Use their own prices and their parent's creation date, categories and tags |
 | Existing lower sale | Leave an already active sale unchanged if it is as low as, or lower than, the proposed campaign price |
 | Individual products | Exclude one product or variation; selecting a variable parent excludes all of its variations |
 | Catalog scope | Published simple products and published variations with a published variable parent, existing when activation begins; private/draft/external/grouped/custom product types are not repriced |
 
-Before activation, use **Spara inställningar** to save the percentage, date cutoff, category, product-tag and product exclusions, and SOFT79 preference. Saving leaves the campaign stopped, does not schedule processing and does not change product prices. The saved choices are restored when you return to the page. **Aktivera kampanj** starts a campaign using the choices currently shown, including any unsaved edits.
+Before activation, use **Spara inställningar** to save the percentage, date cutoff, category, product-tag and product exclusions, the stock option and SOFT79 preference. Saving leaves the campaign stopped, does not schedule processing and does not change product prices. The saved choices are restored when you return to the page. **Aktivera kampanj** starts a campaign using the choices currently shown, including any unsaved edits.
 
 The campaign writes WooCommerce sale prices through product CRUD. It stores the original sale price, sale timestamps and original regular price before the first write. Original regular prices are recorded for comparisons, never written back. Existing sale schedules are suspended for managed products and restored with their original timestamps. A schedule that has expired while the campaign ran is not extended.
 
-Percentage, date, category, product-tag and individual-product settings stay fixed during a campaign. Products created after activation are not automatically enrolled, and later category/tag changes do not re-evaluate membership. Finish the campaign and start another to change the selection.
+Percentage, date, category, product-tag, stock-option and individual-product settings stay fixed during a campaign. Products created after activation are not automatically enrolled, and later category/tag changes do not re-evaluate membership. Finish the campaign and start another to change the selection.
+
+When stock exclusion is enabled, a campaign-managed product that becomes out of stock has its campaign sale price and dates temporarily cleared. Its original pre-campaign sale/schedule and restoration decisions remain in the journal. If it comes back in stock while the campaign is active, the campaign price resumes against its current regular price. This also applies to variations and shared parent stock, in bounded batches. Products excluded at activation are not automatically enrolled when restocked. Manually edited sale prices/dates are respected and are not replaced by stock handling. SOFT79 exclusion remains in force for these paused campaign products while enabled. At campaign completion, paused products follow the same original-price restoration and required-choice rules as other managed products, even if still out of stock.
+
+Existing campaigns saved by an older version keep their prior behavior until ended and restarted with the stock option enabled. Updating the plugin alone does not remove already-applied discounts. Normal WooCommerce stock saves and order-driven stock-status changes trigger handling, with a persistent scheduled retry if a campaign write is busy or interrupted. Direct database updates bypassing WooCommerce stock hooks are not observed.
 
 ## Price changes during a campaign
 
@@ -75,7 +80,7 @@ Test representative products, tax/currency rounding, existing scheduled sales, c
 
 ## Build a ZIP when you choose
 
-On GitHub, open **Actions → Build installable ZIP → Run workflow**, choose `main` (or another branch), then press **Run workflow** again. After all tests pass, open that run and download `storewide-sale-0.2.2.zip` under **Artifacts**. That file can be uploaded to WordPress directly; no extraction is needed. Building a ZIP does not publish a release or change a store. Version tags can also prepare a draft release, with publication remaining a separate step.
+On GitHub, open **Actions → Build installable ZIP → Run workflow**, choose `main` (or another branch), then press **Run workflow** again. After all tests pass, open that run and download `storewide-sale-0.2.3.zip` under **Artifacts**. That file can be uploaded to WordPress directly; no extraction is needed. Building a ZIP does not publish a release or change a store. Version tags can also prepare a draft release, with publication remaining a separate step.
 
 ## Development and automated checks
 
@@ -86,6 +91,14 @@ Fast development commands are `node --test tests/admin.test.cjs tests/selectors.
 The integration script creates product fixtures and changes prices. Run it only on a disposable, empty test site. It requires CLI, `SWS_TEST_RUN=1`, a site option `sws_test_environment=disposable`, no existing product posts/campaign and `SWS_SOFT79_FILE` pointing to the separately checked-out fork entry point. Use `SWS_TEST_RUN=1 SWS_SOFT79_FILE=/absolute/path/to/soft79-wc-pricing-rules.php wp eval-file /absolute/path/to/storewide-sale/tests/integration.php --path=/absolute/path/to/disposable-wordpress` after installing WooCommerce and activating this plugin. `scripts/ci-integration.sh` provisions that environment in Actions using its dedicated MySQL service.
 
 ## Changelog
+
+### 0.2.3, 2026-11-24
+
+| Type | Change |
+| --- | --- |
+| Added | Default-checked, saved out-of-stock exclusion and campaign overview status |
+| Added | Pause campaign prices when managed products sell out; resume on restock, including variation/shared stock and scheduled retries |
+| Changed | Keep restoration choices available for products whose campaign prices are paused because of stock |
 
 ### 0.2.2, 2026-11-24
 
