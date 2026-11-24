@@ -142,7 +142,8 @@ final class SWS_Engine {
     }
     private function out_of_stock( $product ) {
         if ( 'outofstock' === $product->get_stock_status( 'edit' ) ) { return true; }
-        if ( $product->get_parent_id() ) {
+        // Aggregate parent stock can lag a variation save; only inherited stock governs it.
+        if ( $product->get_parent_id() && 'parent' === $product->get_manage_stock() ) {
             $parent = wc_get_product( $product->get_parent_id() );
             if ( $parent && 'outofstock' === $parent->get_stock_status( 'edit' ) ) { return true; }
         }
