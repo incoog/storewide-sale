@@ -15,11 +15,11 @@ There is no build step or runtime dependency on another discount plugin. The ZIP
 | Setting | Behavior |
 | --- | --- |
 | Percentage | A discount greater than 0 and up to 100%, calculated from the current regular price, rounded to the store's price decimals |
-| Created after | Exclude products created after the selected date, in the site's timezone; the selected day is included |
+| Published after | Exclude products whose stored publication date is after the selected date, in the site's timezone; the selected day is included |
 | Categories | Search and select category chips; selected categories and their descendants are excluded |
 | Out of stock | The default-checked option excludes products with WooCommerce status `outofstock`; variation and parent stock statuses are checked. `onbackorder` remains eligible. Save the option before activation. |
 | Product tags | Search and select product tags; a product matching any selected tag is excluded, including all variations of a tagged parent |
-| Variations | Use their own prices and their parent's creation date, categories and tags |
+| Variations | Use their own prices and their parent's stored publication date, categories and tags |
 | Existing lower sale | Leave an already active sale unchanged if it is as low as, or lower than, the proposed campaign price |
 | Individual products | Exclude one product or variation; selecting a variable parent excludes all of its variations |
 | Catalog scope | Published simple products and published variations with a published variable parent, existing when activation begins; private/draft/external/grouped/custom product types are not repriced |
